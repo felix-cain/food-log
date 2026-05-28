@@ -1,11 +1,17 @@
 """SQLite storage for food log entries.
 
 Switched by env var:
-- TURSO_URL set: connect to Turso (hosted SQLite) via the libsql client
-- Otherwise: open local `food_log.db` via the stdlib sqlite3 module
+- TURSO_URL set: talk to Turso via the HRANA HTTP API (uses httpx)
+- Otherwise: open local `food_log.db` via stdlib sqlite3
 
-libsql is only imported when actually needed, so local dev doesn't need it
-installed (handy because libsql has no wheel for Python 3.14 yet).
+The Turso path uses Anthropic SDK's transitive httpx dep — no native code,
+no Rust toolchain, no Python-version-specific wheels.
+
+Note: queries on the Turso path are NOT transactional across separate
+execute() calls. For this app the only multi-statement write is save_meal
+(meal insert + N item inserts), which accepts a small risk of a partially
+saved meal if a single HTTP call fails mid-operation. Acceptable for a
+personal log.
 """
 
 from __future__ import annotations
@@ -15,11 +21,114 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from .vision import MealAnalysis
 
 LOCAL_DB_PATH = Path(__file__).parent.parent / "food_log.db"
+
+
+# ============================================================================
+# Turso HTTP wrapper — minimal sqlite3-compatible surface for our usage
+# ============================================================================
+
+
+class _TursoCursor:
+    """sqlite3.Cursor-shaped view over one HRANA execute response."""
+
+    def __init__(self, result: dict) -> None:
+        self._rows: list[tuple] = [
+            tuple(_decode_hrana_value(cell) for cell in row)
+            for row in result.get("rows", [])
+        ]
+        rowid = result.get("last_insert_rowid")
+        self.lastrowid: int | None = int(rowid) if rowid is not None else None
+        self.rowcount: int = result.get("affected_row_count", 0)
+
+    def fetchall(self) -> list[tuple]:
+        return list(self._rows)
+
+
+class _TursoConnection:
+    """Minimal sqlite3.Connection-shaped wrapper over HRANA HTTP API."""
+
+    def __init__(self, libsql_url: str, auth_token: str | None) -> None:
+        url = libsql_url
+        if url.startswith("libsql://"):
+            url = "https://" + url[len("libsql://") :]
+        self._endpoint = url.rstrip("/") + "/v2/pipeline"
+        self._headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "Content-Type": "application/json",
+        }
+
+    def execute(self, sql: str, params: tuple = ()) -> _TursoCursor:
+        import httpx  # transitive dep via anthropic; imported lazily
+
+        body = {
+            "requests": [
+                {
+                    "type": "execute",
+                    "stmt": {
+                        "sql": sql,
+                        "args": [_encode_hrana_value(p) for p in params],
+                    },
+                },
+                {"type": "close"},
+            ]
+        }
+        response = httpx.post(
+            self._endpoint, headers=self._headers, json=body, timeout=30
+        )
+        response.raise_for_status()
+        data = response.json()
+        exec_result = data["results"][0]
+        if exec_result.get("type") != "ok":
+            err = exec_result.get("error", {})
+            raise RuntimeError(
+                f"Turso execute error: {err.get('message', exec_result)}"
+            )
+        return _TursoCursor(exec_result["response"]["result"])
+
+    def commit(self) -> None:
+        # HRANA auto-commits each pipeline.
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+def _encode_hrana_value(v: Any) -> dict:
+    if v is None:
+        return {"type": "null"}
+    if isinstance(v, bool):
+        return {"type": "integer", "value": str(int(v))}
+    if isinstance(v, int):
+        return {"type": "integer", "value": str(v)}
+    if isinstance(v, float):
+        return {"type": "float", "value": v}
+    if isinstance(v, str):
+        return {"type": "text", "value": v}
+    raise TypeError(f"Unsupported parameter type: {type(v).__name__}")
+
+
+def _decode_hrana_value(cell: dict) -> Any:
+    t = cell["type"]
+    if t == "null":
+        return None
+    if t == "integer":
+        return int(cell["value"])
+    if t == "float":
+        return float(cell["value"])
+    if t == "text":
+        return cell["value"]
+    raise ValueError(f"Unknown HRANA type: {t}")
+
+
+# ============================================================================
+# Connection switcher + schema + public API
+# ============================================================================
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meals (
@@ -46,12 +155,7 @@ CREATE INDEX IF NOT EXISTS idx_meals_date ON meals(date);
 def _open_connection():
     turso_url = os.getenv("TURSO_URL")
     if turso_url:
-        import libsql  # imported lazily — only installed in the deploy env
-
-        return libsql.connect(
-            database=turso_url,
-            auth_token=os.getenv("TURSO_AUTH_TOKEN"),
-        )
+        return _TursoConnection(turso_url, os.getenv("TURSO_AUTH_TOKEN"))
     conn = sqlite3.connect(LOCAL_DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
