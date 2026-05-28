@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Food Log">
+<meta name="theme-color" content="#1a1a1a">
+<title>Food Log</title>
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #f7f6f4;
+    color: #1a1a1a;
+    min-height: 100vh;
+    -webkit-tap-highlight-color: transparent;
+    padding: max(env(safe-area-inset-top), 20px) 20px max(env(safe-area-inset-bottom), 20px);
+    max-width: 600px;
+    margin: 0 auto;
+  }
+
+  .day-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .day-nav button {
+    background: none;
+    border: none;
+    color: #1a1a1a;
+    font-size: 22px;
+    padding: 8px 12px;
+    cursor: pointer;
+    -webkit-appearance: none;
+    min-width: 44px;
+  }
+  .day-nav button:disabled { color: #ccc; cursor: default; }
+  .day-label { font-size: 18px; font-weight: 600; }
+  .day-totals {
+    text-align: center;
+    color: #777;
+    font-size: 13px;
+    margin-bottom: 20px;
+    min-height: 18px;
+  }
+
+  .meal-section { margin-bottom: 18px; }
+  .meal-header {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #999;
+    margin: 0 4px 8px;
+  }
+  .empty-slot {
+    background: #efece8;
+    border-radius: 12px;
+    padding: 12px 16px;
+    color: #bbb;
+    font-size: 14px;
+    text-align: center;
+  }
+
+  .meal-entry {
+    background: white;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 6px;
+  }
+  .meal-entry-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  .meal-entry-desc {
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.3;
+    flex: 1;
+  }
+  .meal-entry-cal {
+    color: #777;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .meal-entry-items {
+    font-size: 13px;
+    color: #999;
+    line-height: 1.4;
+  }
+  .delete-btn {
+    background: none;
+    border: none;
+    color: #c44;
+    font-size: 12px;
+    margin-top: 8px;
+    padding: 0;
+    cursor: pointer;
+    -webkit-appearance: none;
+  }
+
+  .photo-button {
+    display: block;
+    width: 100%;
+    margin: 24px 0 0;
+    padding: 22px;
+    background: #1a1a1a;
+    color: white;
+    border: none;
+    border-radius: 16px;
+    font-size: 17px;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: center;
+    -webkit-appearance: none;
+    transition: background 0.15s;
+  }
+  .photo-button:active { background: #333; }
+  .photo-button[disabled] { background: #999; cursor: default; }
+  input[type="file"] { display: none; }
+
+  .status {
+    text-align: center;
+    color: #777;
+    font-size: 14px;
+    margin: 12px 0;
+    min-height: 20px;
+  }
+  .preview {
+    width: 100%;
+    border-radius: 12px;
+    margin: 0 0 12px;
+    display: block;
+  }
+  .description {
+    font-size: 16px;
+    font-weight: 500;
+    margin: 16px 0 12px;
+    line-height: 1.4;
+  }
+  .items { display: flex; flex-direction: column; gap: 8px; }
+  .item {
+    background: white;
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .item-name { font-size: 15px; font-weight: 500; line-height: 1.3; }
+  .item-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 13px;
+    color: #777;
+    align-items: center;
+  }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .pill.high { background: #d4edda; color: #155724; }
+  .pill.medium { background: #fff3cd; color: #856404; }
+  .pill.low { background: #f0f0f0; color: #666; }
+  .totals {
+    margin-top: 12px;
+    padding: 14px 16px;
+    background: #1a1a1a;
+    color: white;
+    border-radius: 12px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+  }
+  .error {
+    background: #fde2e2;
+    color: #841515;
+    padding: 14px 16px;
+    border-radius: 12px;
+    margin: 12px 0;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  .label-prompt {
+    text-align: center;
+    color: #777;
+    font-size: 14px;
+    margin: 24px 0 12px;
+  }
+  .meal-type-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .meal-type-btn {
+    padding: 16px;
+    background: white;
+    color: #1a1a1a;
+    border: 1px solid #ddd;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    -webkit-appearance: none;
+    transition: all 0.15s;
+  }
+  .meal-type-btn:active { background: #1a1a1a; color: white; border-color: #1a1a1a; }
+  .secondary-btn {
+    display: block;
+    width: 100%;
+    margin-top: 12px;
+    padding: 12px;
+    background: none;
+    border: 1px solid #ddd;
+    border-radius: 12px;
+    font-size: 14px;
+    color: #777;
+    cursor: pointer;
+    -webkit-appearance: none;
+  }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .pulsing { animation: pulse 1.4s ease-in-out infinite; }
+</style>
+</head>
+<body>
+
+<section id="day-view">
+  <div class="day-nav">
+    <button id="prev-day" aria-label="Previous day">‹</button>
+    <span class="day-label" id="day-label">Today</span>
+    <button id="next-day" aria-label="Next day">›</button>
+  </div>
+  <div class="day-totals" id="day-totals">—</div>
+  <div id="meal-sections"></div>
+
+  <button class="photo-button" id="snap-btn">Snap food</button>
+  <input type="file" id="photo-input" accept="image/*" capture="environment">
+</section>
+
+<section id="review-view" hidden>
+  <div class="day-nav">
+    <button id="cancel-btn" aria-label="Back">‹ Back</button>
+    <span class="day-label">Review</span>
+    <span style="min-width: 44px;"></span>
+  </div>
+
+  <div id="status" class="status"></div>
+  <div id="result"></div>
+
+  <div id="label-prompt" class="label-prompt" hidden>Save under which meal?</div>
+  <div class="meal-type-buttons" id="meal-type-buttons" hidden>
+    <button class="meal-type-btn" data-type="breakfast">Breakfast</button>
+    <button class="meal-type-btn" data-type="lunch">Lunch</button>
+    <button class="meal-type-btn" data-type="dinner">Dinner</button>
+    <button class="meal-type-btn" data-type="snack">Snack</button>
+  </div>
+  <button class="secondary-btn" id="redo-btn" hidden>Cancel — don't save</button>
+</section>
+
+<script>
+const MEAL_TYPES = [
+  { key: 'breakfast', label: 'Breakfast' },
+  { key: 'lunch', label: 'Lunch' },
+  { key: 'dinner', label: 'Dinner' },
+  { key: 'snack', label: 'Snacks' },
+];
+
+const TOKEN_KEY = 'foodlog_token';
+
+// Pick up a token passed via URL hash (e.g. https://app/#token=app_xyz)
+// and stash it. Strip from URL so it doesn't end up in browser history.
+(function readTokenFromHash() {
+  const m = location.hash.match(/[#&]token=([^&]+)/);
+  if (m) {
+    localStorage.setItem(TOKEN_KEY, decodeURIComponent(m[1]));
+    history.replaceState(null, '', location.pathname);
+  }
+})();
+
+async function api(url, options = {}) {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const headers = { ...(options.headers || {}) };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const response = await fetch(url, { ...options, headers });
+  if (response.status === 401) {
+    showAuthBanner();
+    throw new Error('Not authorized. Open the URL with #token=… to set your app token.');
+  }
+  return response;
+}
+
+function showAuthBanner() {
+  if (document.getElementById('auth-banner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'auth-banner';
+  banner.className = 'error';
+  banner.style.margin = '12px 0';
+  banner.textContent = 'Auth required. Reopen the URL with #token=… to set your app token.';
+  document.body.insertBefore(banner, document.body.firstChild);
+}
+
+let currentDate = todayISO();
+let pendingAnalysis = null;
+let pendingPreviewUrl = null;
+
+const dayView = document.getElementById('day-view');
+const reviewView = document.getElementById('review-view');
+const dayLabel = document.getElementById('day-label');
+const dayTotals = document.getElementById('day-totals');
+const mealSections = document.getElementById('meal-sections');
+const snapBtn = document.getElementById('snap-btn');
+const photoInput = document.getElementById('photo-input');
+const prevDay = document.getElementById('prev-day');
+const nextDay = document.getElementById('next-day');
+const cancelBtn = document.getElementById('cancel-btn');
+const statusEl = document.getElementById('status');
+const resultEl = document.getElementById('result');
+const labelPrompt = document.getElementById('label-prompt');
+const mealTypeButtons = document.getElementById('meal-type-buttons');
+const redoBtn = document.getElementById('redo-btn');
+
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function shiftDate(iso, days) {
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatDateLabel(iso) {
+  const today = todayISO();
+  if (iso === today) return 'Today';
+  if (iso === shiftDate(today, -1)) return 'Yesterday';
+  const d = new Date(iso + 'T00:00:00');
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+async function loadDay() {
+  dayLabel.textContent = formatDateLabel(currentDate);
+  nextDay.disabled = currentDate >= todayISO();
+
+  let meals = [];
+  try {
+    const response = await api(`/entries?date=${currentDate}`);
+    if (response.ok) meals = await response.json();
+  } catch (e) { /* show empty */ }
+
+  const byType = Object.fromEntries(MEAL_TYPES.map(t => [t.key, []]));
+  for (const meal of meals) byType[meal.meal_type].push(meal);
+
+  let totalCal = 0;
+  let totalItems = 0;
+  for (const meal of meals) {
+    for (const item of meal.items) {
+      totalCal += item.calories;
+      totalItems += 1;
+    }
+  }
+  dayTotals.textContent = totalItems > 0
+    ? `~${totalCal} cal · ${totalItems} item${totalItems === 1 ? '' : 's'}`
+    : 'Nothing logged yet';
+
+  mealSections.innerHTML = MEAL_TYPES.map(t => `
+    <div class="meal-section">
+      <div class="meal-header">${t.label}</div>
+      ${byType[t.key].length === 0
+        ? `<div class="empty-slot">—</div>`
+        : byType[t.key].map(renderMealEntry).join('')}
+    </div>
+  `).join('');
+
+  document.querySelectorAll('[data-delete-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this entry?')) return;
+      await api(`/entries/${btn.dataset.deleteId}`, { method: 'DELETE' });
+      loadDay();
+    });
+  });
+}
+
+function renderMealEntry(meal) {
+  const mealCal = meal.items.reduce((s, i) => s + i.calories, 0);
+  const itemList = meal.items.map(i => i.name).join(', ');
+  return `
+    <div class="meal-entry">
+      <div class="meal-entry-header">
+        <div class="meal-entry-desc">${escapeHtml(meal.description)}</div>
+        <div class="meal-entry-cal">${mealCal} cal</div>
+      </div>
+      <div class="meal-entry-items">${escapeHtml(itemList)}</div>
+      <button class="delete-btn" data-delete-id="${meal.id}">Delete</button>
+    </div>
+  `;
+}
+
+prevDay.addEventListener('click', () => { currentDate = shiftDate(currentDate, -1); loadDay(); });
+nextDay.addEventListener('click', () => {
+  if (currentDate >= todayISO()) return;
+  currentDate = shiftDate(currentDate, 1);
+  loadDay();
+});
+
+snapBtn.addEventListener('click', () => photoInput.click());
+
+cancelBtn.addEventListener('click', () => {
+  pendingAnalysis = null;
+  if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); pendingPreviewUrl = null; }
+  showView('day');
+});
+
+photoInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  showView('review');
+  resultEl.innerHTML = '';
+  labelPrompt.hidden = true;
+  mealTypeButtons.hidden = true;
+  redoBtn.hidden = false;
+
+  if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
+  pendingPreviewUrl = URL.createObjectURL(file);
+  resultEl.innerHTML = `<img class="preview" src="${pendingPreviewUrl}" alt="meal">`;
+
+  statusEl.textContent = 'Sending to Claude (15–30s)…';
+  statusEl.classList.add('pulsing');
+
+  const formData = new FormData();
+  formData.append('photo', file);
+
+  try {
+    const response = await api('/analyze', { method: 'POST', body: formData });
+    if (!response.ok) throw new Error(`Server error ${response.status}: ${await response.text()}`);
+    pendingAnalysis = await response.json();
+    renderAnalysis(pendingAnalysis);
+    labelPrompt.hidden = false;
+    mealTypeButtons.hidden = false;
+  } catch (err) {
+    resultEl.insertAdjacentHTML('beforeend', `<div class="error">${escapeHtml(err.message)}</div>`);
+  } finally {
+    statusEl.textContent = '';
+    statusEl.classList.remove('pulsing');
+    photoInput.value = '';
+  }
+});
+
+function renderAnalysis(data) {
+  const totalCal = data.items.reduce((s, i) => s + i.calories_estimate, 0);
+  const totalGrams = data.items.reduce((s, i) => s + i.estimated_grams, 0);
+
+  const itemsHtml = data.items.map(item => `
+    <div class="item">
+      <div class="item-name">${escapeHtml(item.name)}</div>
+      <div class="item-meta">
+        <span>${Math.round(item.estimated_grams)}g</span>
+        <span>${item.calories_estimate} cal</span>
+        <span class="pill ${item.confidence}">${item.confidence}</span>
+      </div>
+    </div>
+  `).join('');
+
+  resultEl.innerHTML = `
+    <img class="preview" src="${pendingPreviewUrl}" alt="meal">
+    <div class="description">${escapeHtml(data.description)}</div>
+    <div class="items">${itemsHtml}</div>
+    <div class="totals">
+      <span>${data.items.length} item${data.items.length === 1 ? '' : 's'} · ${Math.round(totalGrams)}g</span>
+      <span>~${totalCal} cal</span>
+    </div>
+  `;
+}
+
+mealTypeButtons.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.meal-type-btn');
+  if (!btn || !pendingAnalysis) return;
+
+  const mealType = btn.dataset.type;
+  labelPrompt.hidden = true;
+  mealTypeButtons.hidden = true;
+  redoBtn.hidden = true;
+  statusEl.textContent = 'Saving…';
+
+  try {
+    const response = await api('/entries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: currentDate,
+        meal_type: mealType,
+        analysis: pendingAnalysis,
+      }),
+    });
+    if (!response.ok) throw new Error(`Save failed: ${await response.text()}`);
+    pendingAnalysis = null;
+    if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); pendingPreviewUrl = null; }
+    showView('day');
+    await loadDay();
+  } catch (err) {
+    resultEl.insertAdjacentHTML('beforeend', `<div class="error">${escapeHtml(err.message)}</div>`);
+    labelPrompt.hidden = false;
+    mealTypeButtons.hidden = false;
+    redoBtn.hidden = false;
+  } finally {
+    statusEl.textContent = '';
+  }
+});
+
+redoBtn.addEventListener('click', () => {
+  pendingAnalysis = null;
+  if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); pendingPreviewUrl = null; }
+  showView('day');
+});
+
+function showView(name) {
+  dayView.hidden = name !== 'day';
+  reviewView.hidden = name !== 'review';
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+loadDay();
+</script>
+</body>
+</html>

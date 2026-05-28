@@ -1,0 +1,15 @@
+pandas>=2.2
+openpyxl>=3.1
+matplotlib>=3.8
+seaborn>=0.13
+scipy>=1.11
+jupyter>=1.0
+nbformat>=5.9
+
+# Backend (step 1: vision endpoint)
+fastapi>=0.115
+uvicorn[standard]>=0.30
+anthropic>=0.50
+python-multipart>=0.0.9
+pydantic>=2.7
+libsql>=0.1.0; python_version<"3.14"
