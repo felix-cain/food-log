@@ -44,6 +44,53 @@
   }
   .day-nav button:disabled { color: #ccc; cursor: default; }
   .day-label { font-size: 18px; font-weight: 600; }
+
+  .week-strip {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin: 8px 0 14px;
+  }
+  .week-day {
+    background: white;
+    border-radius: 10px;
+    padding: 8px 0 10px;
+    text-align: center;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    border: 1.5px solid transparent;
+    -webkit-appearance: none;
+    font-family: inherit;
+    color: inherit;
+    transition: background 0.15s, color 0.15s;
+  }
+  .week-day.selected { background: #1a1a1a; color: white; }
+  .week-day.today:not(.selected) { border-color: #1a1a1a; }
+  .week-day-name {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    opacity: 0.55;
+  }
+  .week-day.selected .week-day-name { opacity: 0.7; }
+  .week-day-num {
+    font-size: 15px;
+    font-weight: 600;
+    margin-top: 2px;
+    line-height: 1;
+  }
+  .week-day-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #1a1a1a;
+    margin: 6px auto 0;
+    opacity: 0;
+  }
+  .week-day-dot.has-entries { opacity: 1; }
+  .week-day.selected .week-day-dot { background: white; }
+
   .day-totals {
     text-align: center;
     color: #777;
@@ -60,6 +107,15 @@
     letter-spacing: 1.2px;
     color: #999;
     margin: 0 4px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .meal-header-cal {
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    text-transform: none;
+    font-size: 12px;
   }
   .empty-slot {
     background: #efece8;
@@ -247,6 +303,7 @@
     <span class="day-label" id="day-label">Today</span>
     <button id="next-day" aria-label="Next day">›</button>
   </div>
+  <div class="week-strip" id="week-strip"></div>
   <div class="day-totals" id="day-totals">—</div>
   <div id="meal-sections"></div>
 
@@ -324,6 +381,7 @@ const dayView = document.getElementById('day-view');
 const reviewView = document.getElementById('review-view');
 const dayLabel = document.getElementById('day-label');
 const dayTotals = document.getElementById('day-totals');
+const weekStripEl = document.getElementById('week-strip');
 const mealSections = document.getElementById('meal-sections');
 const snapBtn = document.getElementById('snap-btn');
 const photoInput = document.getElementById('photo-input');
@@ -335,6 +393,11 @@ const resultEl = document.getElementById('result');
 const labelPrompt = document.getElementById('label-prompt');
 const mealTypeButtons = document.getElementById('meal-type-buttons');
 const redoBtn = document.getElementById('redo-btn');
+
+// Cache per-day summaries (count + calories) keyed by ISO date.
+// loadDay updates the cache for currentDate after a fresh fetch, so
+// the week-strip dots stay in sync without explicit invalidation.
+const daySummaryCache = new Map();
 
 function todayISO() {
   const d = new Date();
@@ -355,9 +418,81 @@ function formatDateLabel(iso) {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+function getWeekWindow(selectedDate, today) {
+  // 7-day window that includes `selectedDate`, never showing future days.
+  // When `selectedDate` is today, this is the last 7 days (today rightmost).
+  // When `selectedDate` is in the past, the window shifts back to keep it
+  // roughly centered, still clamped so the right edge is at most today.
+  const proposedEnd = shiftDate(selectedDate, 3);
+  const end = proposedEnd > today ? today : proposedEnd;
+  const start = shiftDate(end, -6);
+  const days = [];
+  for (let i = 0; i < 7; i++) days.push(shiftDate(start, i));
+  return days;
+}
+
+async function fetchDaySummary(date) {
+  if (daySummaryCache.has(date)) return daySummaryCache.get(date);
+  try {
+    const r = await api(`/entries?date=${date}`);
+    if (!r.ok) throw new Error('non-ok');
+    const meals = await r.json();
+    const summary = {
+      count: meals.reduce((s, m) => s + m.items.length, 0),
+      calories: meals.reduce((s, m) => s + m.items.reduce((s2, i) => s2 + i.calories, 0), 0),
+    };
+    daySummaryCache.set(date, summary);
+    return summary;
+  } catch (e) {
+    return { count: 0, calories: 0 };
+  }
+}
+
+async function renderWeekStrip() {
+  const today = todayISO();
+  const days = getWeekWindow(currentDate, today);
+
+  weekStripEl.innerHTML = days.map(d => {
+    const dateObj = new Date(d + 'T00:00:00');
+    const name = dateObj.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3);
+    const num = dateObj.getDate();
+    const classes = ['week-day'];
+    if (d === currentDate) classes.push('selected');
+    if (d === today) classes.push('today');
+    return `
+      <button class="${classes.join(' ')}" data-date="${d}">
+        <div class="week-day-name">${name}</div>
+        <div class="week-day-num">${num}</div>
+        <div class="week-day-dot" data-dot="${d}"></div>
+      </button>
+    `;
+  }).join('');
+
+  weekStripEl.querySelectorAll('[data-date]').forEach(el => {
+    el.addEventListener('click', () => {
+      const d = el.dataset.date;
+      if (d !== currentDate) {
+        currentDate = d;
+        loadDay();
+      }
+    });
+  });
+
+  await Promise.all(days.map(async d => {
+    const summary = await fetchDaySummary(d);
+    if (summary.count > 0) {
+      const dot = weekStripEl.querySelector(`[data-dot="${d}"]`);
+      if (dot) dot.classList.add('has-entries');
+    }
+  }));
+}
+
 async function loadDay() {
   dayLabel.textContent = formatDateLabel(currentDate);
   nextDay.disabled = currentDate >= todayISO();
+
+  // Render strip in parallel with the day's meal data
+  renderWeekStrip();
 
   let meals = [];
   try {
@@ -380,14 +515,26 @@ async function loadDay() {
     ? `~${totalCal} cal · ${totalItems} item${totalItems === 1 ? '' : 's'}`
     : 'Nothing logged yet';
 
-  mealSections.innerHTML = MEAL_TYPES.map(t => `
-    <div class="meal-section">
-      <div class="meal-header">${t.label}</div>
-      ${byType[t.key].length === 0
-        ? `<div class="empty-slot">—</div>`
-        : byType[t.key].map(renderMealEntry).join('')}
-    </div>
-  `).join('');
+  // Update cache so the week-strip dot reflects fresh data after save/delete
+  daySummaryCache.set(currentDate, { count: totalItems, calories: totalCal });
+
+  mealSections.innerHTML = MEAL_TYPES.map(t => {
+    const sectionMeals = byType[t.key];
+    const sectionCal = sectionMeals.reduce(
+      (s, m) => s + m.items.reduce((s2, i) => s2 + i.calories, 0), 0
+    );
+    return `
+      <div class="meal-section">
+        <div class="meal-header">
+          <span>${t.label}</span>
+          ${sectionCal > 0 ? `<span class="meal-header-cal">${sectionCal} cal</span>` : ''}
+        </div>
+        ${sectionMeals.length === 0
+          ? `<div class="empty-slot">No ${t.label.toLowerCase()} logged</div>`
+          : sectionMeals.map(renderMealEntry).join('')}
+      </div>
+    `;
+  }).join('');
 
   document.querySelectorAll('[data-delete-id]').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -396,6 +543,10 @@ async function loadDay() {
       loadDay();
     });
   });
+
+  // Refresh the strip's dot for current day in case its has-entries state changed
+  const todayMark = weekStripEl.querySelector(`[data-dot="${currentDate}"]`);
+  if (todayMark) todayMark.classList.toggle('has-entries', totalItems > 0);
 }
 
 function renderMealEntry(meal) {
