@@ -6,10 +6,14 @@ Endpoints:
     GET  /entries?date=... - List meal entries for a given YYYY-MM-DD
     POST /entries          - Save an analyzed meal under a date + meal type
     DELETE /entries/{id}   - Remove a saved meal
+    GET  /profile          - Profile + derived calorie/protein targets (nulls if unset)
+    PUT  /profile          - Save the profile
+    GET  /summary?days=... - Stats + Claude analysis for the N days ending yesterday
 """
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -19,7 +23,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .auth import require_token
-from .db import delete_meal, init_db, list_meals_for_date, save_meal
+from .db import delete_meal, get_profile, init_db, list_meals_for_date, save_meal, save_profile
+from .summary import SummaryResponse, build_summary
+from .targets import Profile, Targets, compute_targets
 from .vision import MealAnalysis, analyze_meal_photo
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -74,3 +80,40 @@ def remove_entry(meal_id: int) -> dict:
     if not delete_meal(meal_id):
         raise HTTPException(404, "Entry not found")
     return {"status": "deleted"}
+
+
+@app.get(
+    "/summary",
+    response_model=SummaryResponse,
+    dependencies=[Depends(require_token)],
+)
+def get_summary(days: int = 7, today: date | None = None, refresh: bool = False) -> SummaryResponse:
+    # `today` comes from the client so the period follows the phone's local
+    # date rather than the server's (UTC on Render)
+    if days < 1 or days > 90:
+        raise HTTPException(400, "days must be between 1 and 90")
+    return build_summary(days, today=today, refresh=refresh)
+
+
+class ProfileResponse(BaseModel):
+    profile: Profile | None
+    targets: Targets | None
+
+
+def _profile_response() -> ProfileResponse:
+    row = get_profile()
+    if not row:
+        return ProfileResponse(profile=None, targets=None)
+    profile = Profile(**row)
+    return ProfileResponse(profile=profile, targets=compute_targets(profile))
+
+
+@app.get("/profile", response_model=ProfileResponse, dependencies=[Depends(require_token)])
+def read_profile() -> ProfileResponse:
+    return _profile_response()
+
+
+@app.put("/profile", response_model=ProfileResponse, dependencies=[Depends(require_token)])
+def update_profile(profile: Profile) -> ProfileResponse:
+    save_profile(profile.model_dump())
+    return _profile_response()

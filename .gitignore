@@ -14,6 +14,7 @@ env/
 
 # Local data — DO NOT push personal health data to GitHub
 food_log.db
+food_log*.db
 food_log.db-wal
 food_log.db-shm
 health_log.xlsx
