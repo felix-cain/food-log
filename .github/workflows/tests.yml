@@ -1,0 +1,37 @@
+# Runs the full test suite (unit, API and headless-browser) on every push.
+# Render is set to deploy only after these checks pass.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # matches runtime.txt
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      # The browser tests use Node's built-in WebSocket and the runner's Chrome
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          CI: "true" # browser tests fail rather than skip if Chrome or Node is missing
+        run: python -m pytest

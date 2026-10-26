@@ -1,0 +1,2 @@
+# Test-only dependencies (CI and local). The app itself needs requirements.txt.
+pytest>=8,<10

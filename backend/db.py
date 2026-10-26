@@ -25,7 +25,8 @@ from typing import Any, Iterator
 
 from .vision import MealAnalysis
 
-LOCAL_DB_PATH = Path(__file__).parent.parent / "food_log.db"
+# FOODLOG_DB_PATH lets tests point the app at a throwaway database
+LOCAL_DB_PATH = Path(os.getenv("FOODLOG_DB_PATH") or Path(__file__).parent.parent / "food_log.db")
 
 
 # ============================================================================
