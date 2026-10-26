@@ -121,7 +121,10 @@ const SCENARIOS = {
     check(document.querySelectorAll('.cal-dot').length === 7, 'logging calendar has 7 days');
     check(document.querySelector('.chart-svg'), 'calorie chart drawn');
     check(document.querySelector('.meter'), 'target meters drawn');
-    return 'analysis, meters, chart and calendar rendered';
+    const text = document.getElementById('summary-content').textContent;
+    check(text.includes('Food quality') && text.includes('Fibre') && text.includes('aim 30g+'), 'food quality measures');
+    check(document.querySelector('.share-row'), 'protein sources drawn');
+    return 'analysis, food quality, protein sources, meters, chart and calendar rendered';
   },
 
   async summary_claude_down() {

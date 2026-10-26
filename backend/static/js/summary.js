@@ -239,17 +239,92 @@ function summaryAnalysisHtml(a, error) {
     </div>`;
 }
 
+// Food quality against common UK guidelines, worked out by the server
+function foodQualityHtml(fq) {
+  if (!fq.measures.length) {
+    return `
+      <div class="summary-section">
+        <div class="summary-section-header"><span>Food quality</span></div>
+        <div class="summary-empty">Meals logged from now on record fibre, food groups, processing and plants,
+          and their trends appear here.</div>
+      </div>`;
+  }
+  const coverage = fq.meals_with_detail < fq.meals_total
+    ? `<div class="summary-note">Based on ${fq.meals_with_detail} of ${fq.meals_total} meals; older meals
+       don't have this detail.</div>`
+    : '';
+  const tiles = `
+    <div class="stat-grid">
+      ${statHtml('Ultra-processed', fq.upf_calorie_share !== null ? `${fq.upf_calorie_share}%` : '—', 'of calories')}
+      ${statHtml('Plants in period', fq.distinct_plants, 'different plant foods')}
+    </div>`;
+  const frequent = fq.frequent_foods.length
+    ? `<div class="summary-section">
+         <div class="summary-section-header"><span>Your most frequent foods</span></div>
+         <div class="food-chips">${fq.frequent_foods.map(f =>
+           `<span class="food-chip">${escapeHtml(f.name)} <span class="food-chip-count">×${f.count}</span></span>`).join('')}</div>
+       </div>`
+    : '';
+  return `
+    <div class="summary-section">
+      <div class="summary-section-header"><span>Food quality</span></div>
+      <div class="summary-quick">
+        ${fq.measures.map(guidelineHtml).join('')}
+        ${coverage}
+      </div>
+    </div>
+    <div class="summary-section">${tiles}</div>
+    ${fq.protein_sources.length ? `
+      <div class="summary-section">
+        <div class="summary-section-header"><span>Where your protein comes from</span></div>
+        <div class="chart-card">${fq.protein_sources.map(s => `
+          <div class="share-row">
+            <span class="share-label">${escapeHtml(s.label)}</span>
+            <div class="share-track"><div class="share-fill" style="width: ${s.share}%"></div></div>
+            <span class="share-value">${s.share}%</span>
+          </div>`).join('')}
+        </div>
+      </div>` : ''}
+    ${frequent}`;
+}
+
+// One guideline: green when it's met, amber when a limit is exceeded
+function guidelineHtml(m) {
+  const max = Math.max(m.value, m.guideline) * 1.15 || 1;
+  const pct = v => Math.min(100, (v / max) * 100);
+  const atLeast = m.direction === 'at_least';
+  const met = atLeast ? m.value >= m.guideline : m.value <= m.guideline;
+  const state = met ? 'good' : (atLeast ? '' : 'over');
+  const shown = Number.isInteger(m.value) ? m.value : m.value.toFixed(1);
+  const unit = n => (n === 1 ? m.unit.replace(/s$/, '') : m.unit); // "1 portion", "2 portions"
+  const goal = atLeast ? `aim ${m.guideline}${unit(m.guideline)}+` : `limit ${m.guideline}${unit(m.guideline)}`;
+  return `
+    <div class="meter">
+      <div class="meter-head">
+        <span>${m.label}</span>
+        <span><strong>${shown}${unit(m.value)}</strong> a ${m.per} · ${goal}</span>
+      </div>
+      <div class="meter-track">
+        <div class="meter-fill ${state}" style="width: ${pct(m.value)}%"></div>
+        <div class="meter-target" style="left: ${pct(m.guideline)}%"></div>
+      </div>
+    </div>`;
+}
+
 function renderSummary(data) {
   summarySubtitle.textContent =
     `${formatShortDate(data.period_start)} – ${formatShortDate(data.period_end)}. Today is added once it's over.`;
 
+  // Food patterns lead; calories and macros are context further down
   summaryContent.innerHTML = `
+    ${summaryAnalysisHtml(data.analysis, data.analysis_error)}
+
+    ${foodQualityHtml(data.food_quality)}
+
     <div class="summary-section">
-      <div class="summary-section-header"><span>Quick numbers</span></div>
+      <div class="summary-section-header"><span>Calories and macros</span></div>
       ${quickNumbersHtml(data)}
     </div>
-
-    ${summaryAnalysisHtml(data.analysis, data.analysis_error)}
 
     <div class="summary-section">
       <div class="summary-section-header"><span>Daily calories</span></div>

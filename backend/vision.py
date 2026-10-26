@@ -21,7 +21,12 @@ _ITEM_FIELDS = """For each item, give:
 - calories_estimate: rough calorie count for that portion
 - protein_g: estimated grams of protein in that portion
 - carbs_g: estimated grams of carbohydrates in that portion
-- fat_g: estimated grams of fat in that portion"""
+- fat_g: estimated grams of fat in that portion
+- fibre_g, free_sugar_g, sat_fat_g, salt_g: estimated grams in that portion. Free sugars are added sugars plus the sugars in honey, syrups and fruit juice, not the sugars naturally in whole fruit or milk
+- food_group: where the item's nutrition mainly comes from. For a composite dish use its main ingredient (chicken curry -> "poultry", lentil dahl -> "legumes"); use "mixed_dish" only when nothing dominates. Oily fish is salmon, mackerel, sardines, trout, herring, pilchards, kippers or fresh tuna; other fish is "fish". Ham, bacon, sausages and salami are "processed_meat"
+- processing: "whole" (fresh or minimally processed: fruit, veg, plain meat or fish, eggs, milk, plain yoghurt, oats, rice, dried or tinned beans), "processed" (whole foods with salt, sugar or oil added: cheese, tinned fish, bakery bread, home-cooked dishes) or "ultra_processed" (industrial products with additives: packaged snacks and sweets, fizzy drinks, most packaged bread and breakfast cereals, processed meat, ready meals)
+- fruit_veg_portions: 80g portions of fruit, vegetables or pulses in the item; fruit juice or smoothie counts as at most 1
+- plants: the distinct plant foods in the item, lowercase and singular (e.g. ["broccoli", "brown rice", "chickpea"]). Include fruit, vegetables, whole grains, legumes, nuts and seeds; leave out herbs, spices, oils, refined flour and sugar"""
 
 _PHOTO_PROMPT = f"""You are looking at a photo of food someone ate.
 
@@ -42,6 +47,13 @@ Where they don't give an amount, assume a typical adult portion. Also write a on
 Macro estimates should be reasonable defaults for typical preparations; don't pretend high precision."""
 
 
+FoodGroup = Literal[
+    "vegetables", "fruit", "legumes", "whole_grains", "refined_grains", "potatoes", "nuts_seeds",
+    "dairy", "eggs", "poultry", "red_meat", "processed_meat", "fish", "oily_fish", "plant_protein",
+    "mixed_dish", "sweets_snacks", "sugary_drinks", "alcohol", "other_drinks", "fats_oils_sauces", "other",
+]
+
+
 class FoodItem(BaseModel):
     name: str = Field(description="Concise name of the food item")
     estimated_grams: float = Field(description="Estimated portion weight in grams")
@@ -49,6 +61,15 @@ class FoodItem(BaseModel):
     protein_g: float = Field(description="Estimated grams of protein for this portion")
     carbs_g: float = Field(description="Estimated grams of carbohydrates for this portion")
     fat_g: float = Field(description="Estimated grams of fat for this portion")
+    # Food-quality detail, for trend insights beyond calories and macros
+    fibre_g: float = Field(description="Estimated grams of fibre for this portion")
+    free_sugar_g: float = Field(description="Estimated grams of free sugars for this portion")
+    sat_fat_g: float = Field(description="Estimated grams of saturated fat for this portion")
+    salt_g: float = Field(description="Estimated grams of salt for this portion")
+    food_group: FoodGroup
+    processing: Literal["whole", "processed", "ultra_processed"]
+    fruit_veg_portions: float = Field(description="80g portions of fruit, vegetables or pulses")
+    plants: list[str] = Field(description="Distinct plant foods in the item, lowercase singular")
     confidence: Literal["high", "medium", "low"]
 
 

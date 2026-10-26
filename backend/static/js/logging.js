@@ -111,6 +111,20 @@ async function runAnalysis(note) {
   }
 }
 
+const PROCESSING_LABELS = { whole: 'whole food', processed: 'processed', ultra_processed: 'ultra-processed' };
+
+// e.g. "vegetables · whole food · fibre 4g · broccoli, carrot"; empty for older items
+function itemTagsHtml(item) {
+  if (!item.food_group) return '';
+  const tags = [
+    item.food_group.replace(/_/g, ' '),
+    PROCESSING_LABELS[item.processing] || item.processing,
+    `fibre ${Math.round(item.fibre_g || 0)}g`,
+    (item.plants || []).join(', '),
+  ].filter(Boolean);
+  return `<div class="item-tags">${escapeHtml(tags.join(' · '))}</div>`;
+}
+
 // Description, items and totals for a MealAnalysis-shaped object
 function analysisHtml(data) {
   const totalCal = data.items.reduce((s, i) => s + i.calories_estimate, 0);
@@ -128,6 +142,7 @@ function analysisHtml(data) {
       ${item.protein_g !== null && item.protein_g !== undefined
         ? `<div class="item-macros">P ${Math.round(item.protein_g)}g · C ${Math.round(item.carbs_g || 0)}g · F ${Math.round(item.fat_g || 0)}g</div>`
         : ''}
+      ${itemTagsHtml(item)}
     </div>
   `).join('');
 

@@ -9,12 +9,16 @@ from backend.summary import ClaudeAnalysis
 from backend.vision import FoodItem, MealAnalysis
 
 
-def meal(description: str = "Peanut butter toast", grams: float = 80, calories: int = 200) -> MealAnalysis:
-    return MealAnalysis(
-        description=description,
-        items=[FoodItem(name="sourdough", estimated_grams=grams, calories_estimate=calories,
-                        protein_g=7, carbs_g=38, fat_g=1, confidence="medium")],
-    )
+def item(name: str = "sourdough", grams: float = 80, calories: int = 200, **overrides) -> FoodItem:
+    fields = dict(name=name, estimated_grams=grams, calories_estimate=calories, protein_g=7, carbs_g=38, fat_g=1,
+                  fibre_g=3, free_sugar_g=1, sat_fat_g=0.5, salt_g=0.8, food_group="whole_grains",
+                  processing="processed", fruit_veg_portions=0, plants=["wheat"], confidence="medium")
+    return FoodItem(**{**fields, **overrides})
+
+
+def meal(description: str = "Peanut butter toast", grams: float = 80, calories: int = 200,
+         items: list[FoodItem] | None = None) -> MealAnalysis:
+    return MealAnalysis(description=description, items=items or [item(grams=grams, calories=calories)])
 
 
 class FakeAnthropic:

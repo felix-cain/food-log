@@ -154,7 +154,15 @@ CREATE TABLE IF NOT EXISTS meal_items (
     confidence TEXT NOT NULL,
     protein_g REAL,
     carbs_g REAL,
-    fat_g REAL
+    fat_g REAL,
+    fibre_g REAL,
+    free_sugar_g REAL,
+    sat_fat_g REAL,
+    salt_g REAL,
+    food_group TEXT,
+    processing TEXT,
+    fruit_veg_portions REAL,
+    plants_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_meals_date ON meals(date);
@@ -268,6 +276,15 @@ _MIGRATION_COLUMNS = (
     ("meals", "source", "TEXT"),  # 'photo' or 'text'
     ("meals", "updated_at", "TEXT"),  # set when an entry is corrected
     ("meals", "favourite_id", "INTEGER"),  # the favourite it was logged from, or starred as
+    # Food-quality detail (null on meals logged before it existed)
+    ("meal_items", "fibre_g", "REAL"),
+    ("meal_items", "free_sugar_g", "REAL"),
+    ("meal_items", "sat_fat_g", "REAL"),
+    ("meal_items", "salt_g", "REAL"),
+    ("meal_items", "food_group", "TEXT"),
+    ("meal_items", "processing", "TEXT"),
+    ("meal_items", "fruit_veg_portions", "REAL"),
+    ("meal_items", "plants_json", "TEXT"),
 )
 
 
@@ -345,21 +362,39 @@ def _insert_items(conn, meal_id: int, analysis: MealAnalysis) -> None:
             "protein_g": float(item.protein_g),
             "carbs_g": float(item.carbs_g),
             "fat_g": float(item.fat_g),
+            "fibre_g": float(item.fibre_g),
+            "free_sugar_g": float(item.free_sugar_g),
+            "sat_fat_g": float(item.sat_fat_g),
+            "salt_g": float(item.salt_g),
+            "food_group": item.food_group,
+            "processing": item.processing,
+            "fruit_veg_portions": float(item.fruit_veg_portions),
+            "plants": item.plants,
         }
         for item in analysis.items
     ])
 
 
-_ITEM_COLUMNS = ("name", "grams", "calories", "confidence", "protein_g", "carbs_g", "fat_g")
+# Item fields in list order; "plants" is stored as JSON in plants_json
+_ITEM_FIELDS = (
+    "name", "grams", "calories", "confidence", "protein_g", "carbs_g", "fat_g",
+    "fibre_g", "free_sugar_g", "sat_fat_g", "salt_g", "food_group", "processing",
+    "fruit_veg_portions", "plants",
+)
+_ITEM_COLUMNS = tuple("plants_json" if f == "plants" else f for f in _ITEM_FIELDS)
 
 
 def _insert_item_rows(conn, meal_id: int, rows: list[dict]) -> None:
     """Insert items already in meal_items' shape (as listed by list_meals_between)."""
     for row in rows:
+        values = [
+            json.dumps(row["plants"]) if f == "plants" and row.get("plants") is not None else row.get(f)
+            for f in _ITEM_FIELDS
+        ]
         conn.execute(
             f"INSERT INTO meal_items (meal_id, {', '.join(_ITEM_COLUMNS)}) "
             f"VALUES (?, {', '.join('?' for _ in _ITEM_COLUMNS)})",
-            (meal_id, *(row.get(c) for c in _ITEM_COLUMNS)),
+            (meal_id, *values),
         )
 
 
@@ -380,8 +415,7 @@ def list_meals_between(start: str, end: str) -> list[dict]:
             (start, end),
         ).fetchall()
         item_rows = conn.execute(
-            "SELECT mi.meal_id, mi.name, mi.grams, mi.calories, mi.confidence, "
-            "mi.protein_g, mi.carbs_g, mi.fat_g "
+            f"SELECT mi.meal_id, {', '.join('mi.' + c for c in _ITEM_COLUMNS)} "
             "FROM meal_items mi JOIN meals m ON m.id = mi.meal_id "
             "WHERE m.date BETWEEN ? AND ? ORDER BY mi.id",
             (start, end),
@@ -389,17 +423,9 @@ def list_meals_between(start: str, end: str) -> list[dict]:
 
     items_by_meal: dict[int, list[dict]] = {}
     for i in item_rows:
-        items_by_meal.setdefault(i[0], []).append(
-            {
-                "name": i[1],
-                "grams": i[2],
-                "calories": i[3],
-                "confidence": i[4],
-                "protein_g": i[5],
-                "carbs_g": i[6],
-                "fat_g": i[7],
-            }
-        )
+        item = dict(zip(_ITEM_FIELDS, i[1:]))
+        item["plants"] = json.loads(item["plants"]) if item["plants"] else None
+        items_by_meal.setdefault(i[0], []).append(item)
     return [
         {
             "id": row[0],

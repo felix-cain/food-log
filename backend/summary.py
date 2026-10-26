@@ -22,6 +22,8 @@ from pydantic import BaseModel, Field
 
 from .db import get_cached_analysis, get_profile, list_meals_between, save_cached_analysis
 from .health import format_for_analysis, recent_active_kcal_avg
+from .nutrition import FoodQuality, food_quality
+from .nutrition import format_for_analysis as format_quality
 from .targets import Profile, Targets, compute_targets
 
 MAIN_MEALS = ("breakfast", "lunch", "dinner")
@@ -37,16 +39,17 @@ logger = logging.getLogger(__name__)
 class ClaudeAnalysis(BaseModel):
     observations: list[str] = Field(
         description=(
-            "3-5 specific patterns you noticed in the meal data. Concrete beats "
-            "generic ('weekday breakfasts are coffee-only', 'protein averages "
-            "65g/day'). If data is too thin to see patterns, say so."
+            "3-5 specific patterns in what they eat. Concrete beats generic "
+            "('most of your protein comes from chicken', 'brassicas appear once "
+            "in 7 days', 'fibre averages 18g against 30g'). If data is too thin "
+            "to see patterns, say so."
         ),
     )
     suggestions: list[str] = Field(
         description=(
-            "2-3 concrete things to try this week. Specific actions, not "
-            "platitudes. Examples: 'add a green vegetable to two dinners', "
-            "'log dinners closer to when you eat them'."
+            "2-3 specific food-level things to try this week, grounded in common "
+            "nutrition guidelines. Name foods and swaps, e.g. 'add broccoli or "
+            "cabbage to three dinners', 'swap one chicken lunch for lentils'."
         ),
     )
 
@@ -83,6 +86,7 @@ class SummaryResponse(BaseModel):
     analysis_error: str | None
     daily_totals: list[DailyTotal]
     targets: Targets | None
+    food_quality: FoodQuality
 
 
 # ============================================================================
@@ -90,20 +94,28 @@ class SummaryResponse(BaseModel):
 # ============================================================================
 
 
-_ANALYSIS_PROMPT = """You are looking at someone's food log for the last {days} days. Below is the data — for each day, the meals they logged with items, portions, calories, and macronutrient estimates (protein/carbs/fat in grams).
+# Bump when the prompt changes meaningfully, so cached analyses written with
+# the old prompt aren't reused
+PROMPT_VERSION = "2-food-quality"
 
-Your job: surface what's actually interesting about their eating patterns. Specific observations beat generic ones. Honest beats encouraging — if their data is thin or scattered, say so.
+_ANALYSIS_PROMPT = """You are looking at someone's food log for the last {days} days. For each day there are the meals they logged, with each item's portion, calories and macros (protein/carbs/fat), plus where available its food group, how processed it is, fibre and the plant foods in it. Above the log there are food-quality measures already worked out from it; those numbers are exact, so use them rather than re-adding the log.
+
+What they want from you: insight into the food they eat and how to improve it, not calorie counting. Look at what their diet is made of: which foods and food groups dominate, where their protein comes from, how much fibre, fruit, vegetables and plant variety they get, how much is ultra-processed, oily fish, red and processed meat, sugar and salt, and how these vary across meals and days. Calories and their targets matter only as context.
+
+Judge against common nutrition guidelines (UK NHS and SACN guidance unless something else is clearly more relevant): 30g fibre a day, 5 portions of fruit and veg a day, oily fish at least once a week, no more than 70g red and processed meat a day, no more than 30g free sugars and 6g salt a day, saturated fat under 30g (men) or 20g (women). Thirty different plants a week is a popular, less official target for variety. Beyond those guidelines there are no restrictions on what you can suggest.
 
 Guidance:
-- "observations" should be 3-5 specific patterns. Examples: "weekday breakfasts skipped or coffee-only", "protein averages 65g/day, low for an active person", "vegetables appear in only 2 of 7 dinners", "Wednesday is consistently your highest-calorie day". Avoid platitudes. If you can't see real patterns, that's a valid observation ("only 4 of 7 days logged — not enough to see trends yet").
-- "suggestions" should be 2-3 concrete actions to try this coming week. Specific, not "eat healthier". Examples: "add a green vegetable to two dinners", "swap one ultra-processed snack for fruit", "log meals when you eat them, not retroactively".
+- "observations" should be 3-5 specific food patterns. Examples: "most of your protein comes from chicken and dairy; beans and fish barely feature", "brassicas (broccoli, cabbage, kale) appeared once in 7 days", "fibre averages 18g a day, well under 30g, and breakfast contributes almost none", "your lunches are consistently ultra-processed". If you can't see real patterns, say so ("only 4 of 7 days logged — not enough to see trends yet").
+- "suggestions" should be 2-3 specific, food-level things to try this coming week that would close the biggest gaps. Name foods, swaps and where they'd fit, e.g. "add a handful of frozen peas or spinach to your usual pasta dinner", "swap two chicken lunches for chickpeas or lentils to diversify protein and add fibre", "have mackerel or salmon once this week". Not "eat healthier".
 - Where a meal includes "their own words", that's what the person said they ate. Treat it as the most reliable part of the record.
+- Some older meals don't have food-quality detail; the measures note how many meals they cover. Don't treat missing detail as zero.
 - Days marked "(partial)" are missing at least one of breakfast, lunch or dinner. Their totals are probably incomplete — don't read a low-calorie partial day as under-eating. Days marked "(nothing logged)" are unknown, not fasting.
 
 - If sleep and activity data from their watch is included, look for links with eating where the data supports them: e.g. short or poor sleep followed by higher-calorie or more snack-heavy days, intake on training days versus rest days, protein after hard sessions. "Night before" on a date is the sleep that ended that morning. Days without watch data are unknown, not zero.
 
 Don't invent patterns the data doesn't support. Treat the user as someone who wants honest feedback, not encouragement.
 {context}
+{quality}
 Data:
 {data}{health}"""
 
@@ -150,16 +162,15 @@ def _format_meal_data(daily_meals: dict[str, list[dict]]) -> str:
 
 
 def _format_item(item: dict) -> str:
-    """e.g. 'grilled chicken (130g, 215cal, 40p/0c/5f)'."""
+    """e.g. 'grilled chicken (130g, 215cal, 40p/0c/5f, poultry, whole, fibre 0g)'."""
     macros = []
     for key, label in (("protein_g", "p"), ("carbs_g", "c"), ("fat_g", "f")):
         v = item.get(key)
         macros.append(f"{round(v)}{label}" if v is not None else f"?{label}")
-    macro_str = "/".join(macros)
-    return (
-        f"{item['name']} ({int(item['grams'])}g, "
-        f"{item['calories']}cal, {macro_str})"
-    )
+    parts = [f"{int(item['grams'])}g", f"{item['calories']}cal", "/".join(macros)]
+    if item.get("food_group"):
+        parts += [item["food_group"], item.get("processing") or "?", f"fibre {round(item.get('fibre_g') or 0)}g"]
+    return f"{item['name']} ({', '.join(parts)})"
 
 
 def _is_full_day(meals: list[dict]) -> bool:
@@ -170,7 +181,7 @@ def _is_full_day(meals: list[dict]) -> bool:
 def _fingerprint(start: str, end: str, meals: list[dict], profile: dict | None, health: str) -> str:
     """Changes whenever the analysis input changes, so the cache invalidates."""
     # health is the formatted watch data, so re-syncing unchanged data keeps the cache
-    parts = [start, end, profile["updated_at"] if profile else "no-profile", health]
+    parts = [PROMPT_VERSION, start, end, profile["updated_at"] if profile else "no-profile", health]
     parts += [f"{m['id']}:{len(m['items'])}:{m.get('updated_at') or ''}" for m in meals]
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
@@ -232,6 +243,7 @@ def build_summary(days: int = 7, today: date | None = None, refresh: bool = Fals
         avg_carbs_g=avg_macro("carbs_g"),
         avg_fat_g=avg_macro("fat_g"),
     )
+    quality = food_quality(daily_meals, basis_days, profile.sex if profile else None)
 
     # Claude analysis, cached until the data changes. Failures are reported
     # alongside the stats rather than failing the whole request.
@@ -245,6 +257,7 @@ def build_summary(days: int = 7, today: date | None = None, refresh: bool = Fals
         prompt = _ANALYSIS_PROMPT.format(
             days=days,
             context=_format_context(profile, targets),
+            quality=format_quality(quality),
             data=_format_meal_data(daily_meals),
             health=f"\n\nSleep and activity from their watch:\n{health_text}" if health_text else "",
         )
@@ -272,6 +285,7 @@ def build_summary(days: int = 7, today: date | None = None, refresh: bool = Fals
         analysis_error=analysis_error,
         daily_totals=daily_totals,
         targets=targets,
+        food_quality=quality,
     )
 
 
