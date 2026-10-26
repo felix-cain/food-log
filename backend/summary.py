@@ -96,6 +96,7 @@ Your job: surface what's actually interesting about their eating patterns. Speci
 Guidance:
 - "observations" should be 3-5 specific patterns. Examples: "weekday breakfasts skipped or coffee-only", "protein averages 65g/day, low for an active person", "vegetables appear in only 2 of 7 dinners", "Wednesday is consistently your highest-calorie day". Avoid platitudes. If you can't see real patterns, that's a valid observation ("only 4 of 7 days logged — not enough to see trends yet").
 - "suggestions" should be 2-3 concrete actions to try this coming week. Specific, not "eat healthier". Examples: "add a green vegetable to two dinners", "swap one ultra-processed snack for fruit", "log meals when you eat them, not retroactively".
+- Where a meal includes "their own words", that's what the person said they ate. Treat it as the most reliable part of the record.
 - Days marked "(partial)" are missing at least one of breakfast, lunch or dinner. Their totals are probably incomplete — don't read a low-calorie partial day as under-eating. Days marked "(nothing logged)" are unknown, not fasting.
 
 Don't invent patterns the data doesn't support. Treat the user as someone who wants honest feedback, not encouragement.
@@ -136,7 +137,8 @@ def _format_meal_data(daily_meals: dict[str, list[dict]]) -> str:
             items_text = ", ".join(
                 _format_item(i) for i in meal["items"]
             )
-            lines.append(f"  {meal['meal_type']}: {items_text}")
+            note = f' (their own words: "{meal["note"]}")' if meal.get("note") else ""
+            lines.append(f"  {meal['meal_type']}: {items_text}{note}")
     return "\n".join(lines)
 
 
@@ -161,7 +163,7 @@ def _is_full_day(meals: list[dict]) -> bool:
 def _fingerprint(start: str, end: str, meals: list[dict], profile: dict | None) -> str:
     """Changes whenever the analysis input changes, so the cache invalidates."""
     parts = [start, end, profile["updated_at"] if profile else "no-profile"]
-    parts += [f"{m['id']}:{len(m['items'])}" for m in meals]
+    parts += [f"{m['id']}:{len(m['items'])}:{m.get('updated_at') or ''}" for m in meals]
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 

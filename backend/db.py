@@ -136,7 +136,10 @@ CREATE TABLE IF NOT EXISTS meals (
     date TEXT NOT NULL,
     meal_type TEXT NOT NULL CHECK(meal_type IN ('breakfast','lunch','dinner','snack')),
     description TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    note TEXT,
+    source TEXT,
+    updated_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS meal_items (
@@ -179,6 +182,9 @@ _MIGRATION_COLUMNS = (
     ("meal_items", "protein_g", "REAL"),
     ("meal_items", "carbs_g", "REAL"),
     ("meal_items", "fat_g", "REAL"),
+    ("meals", "note", "TEXT"),  # user's own description / corrections
+    ("meals", "source", "TEXT"),  # 'photo' or 'text'
+    ("meals", "updated_at", "TEXT"),  # set when an entry is corrected
 )
 
 
@@ -212,32 +218,57 @@ def init_db() -> None:
                 pass  # column already exists
 
 
-def save_meal(date: str, meal_type: str, analysis: MealAnalysis) -> int:
+def save_meal(
+    date: str,
+    meal_type: str,
+    analysis: MealAnalysis,
+    note: str | None = None,
+    source: str = "photo",
+) -> int:
     created_at = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         cursor = conn.execute(
-            "INSERT INTO meals (date, meal_type, description, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (date, meal_type, analysis.description, created_at),
+            "INSERT INTO meals (date, meal_type, description, created_at, note, source) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (date, meal_type, analysis.description, created_at, note, source),
         )
         meal_id = cursor.lastrowid
-        for item in analysis.items:
-            conn.execute(
-                "INSERT INTO meal_items "
-                "(meal_id, name, grams, calories, confidence, protein_g, carbs_g, fat_g) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    meal_id,
-                    item.name,
-                    float(item.estimated_grams),
-                    int(item.calories_estimate),
-                    item.confidence,
-                    float(item.protein_g),
-                    float(item.carbs_g),
-                    float(item.fat_g),
-                ),
-            )
+        _insert_items(conn, meal_id, analysis)
         return meal_id
+
+
+def update_meal(meal_id: int, analysis: MealAnalysis, note: str | None) -> bool:
+    """Replace a saved meal's description, items and note (after a correction)."""
+    updated_at = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            "UPDATE meals SET description = ?, note = ?, updated_at = ? WHERE id = ?",
+            (analysis.description, note, updated_at, meal_id),
+        )
+        if cursor.rowcount == 0:
+            return False
+        conn.execute("DELETE FROM meal_items WHERE meal_id = ?", (meal_id,))
+        _insert_items(conn, meal_id, analysis)
+        return True
+
+
+def _insert_items(conn, meal_id: int, analysis: MealAnalysis) -> None:
+    for item in analysis.items:
+        conn.execute(
+            "INSERT INTO meal_items "
+            "(meal_id, name, grams, calories, confidence, protein_g, carbs_g, fat_g) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                meal_id,
+                item.name,
+                float(item.estimated_grams),
+                int(item.calories_estimate),
+                item.confidence,
+                float(item.protein_g),
+                float(item.carbs_g),
+                float(item.fat_g),
+            ),
+        )
 
 
 def list_meals_for_date(date: str) -> list[dict]:
@@ -252,7 +283,7 @@ def list_meals_between(start: str, end: str) -> list[dict]:
     """
     with _connect() as conn:
         meal_rows = conn.execute(
-            "SELECT id, date, meal_type, description, created_at "
+            "SELECT id, date, meal_type, description, created_at, note, source, updated_at "
             "FROM meals WHERE date BETWEEN ? AND ? ORDER BY date, created_at",
             (start, end),
         ).fetchall()
@@ -284,6 +315,9 @@ def list_meals_between(start: str, end: str) -> list[dict]:
             "meal_type": row[2],
             "description": row[3],
             "created_at": row[4],
+            "note": row[5],
+            "source": row[6] or "photo",
+            "updated_at": row[7],
             "items": items_by_meal.get(row[0], []),
         }
         for row in meal_rows

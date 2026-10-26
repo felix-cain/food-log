@@ -84,6 +84,7 @@
   }
 
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -287,6 +288,88 @@
   .primary-btn:active { background: var(--accent-pressed); }
   .primary-btn[disabled] { background: var(--text-faint); cursor: default; }
   input[type="file"] { display: none; }
+
+  /* Snap (photo) and Describe (text/voice) side by side */
+  .log-actions {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .log-actions .primary-btn { margin: 0; }
+  .describe-btn {
+    padding: 18px 20px;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    font-size: 17px;
+    font-weight: 500;
+    cursor: pointer;
+    -webkit-appearance: none;
+  }
+  .describe-btn:active { background: var(--surface-muted); }
+  .log-target {
+    text-align: center;
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 500;
+    margin: -6px 0 12px;
+  }
+
+  /* Text box with a mic button for typed or dictated descriptions */
+  .note-panel { margin-top: 20px; }
+  .note-box { position: relative; }
+  .note-box textarea {
+    display: block;
+    min-height: 88px;
+    resize: vertical;
+    padding-right: 56px;
+    line-height: 1.4;
+  }
+  .mic-btn {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: none;
+    background: var(--surface-muted);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    -webkit-appearance: none;
+  }
+  .mic-btn.recording {
+    background: var(--accent);
+    color: var(--on-accent);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .note-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 6px 4px 0;
+    min-height: 16px;
+  }
+  .note-panel .primary-btn, .note-panel .secondary-btn { margin-top: 10px; }
+  .entry-note {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-top: 12px;
+  }
+  .entry-note strong { color: var(--text); font-weight: 500; }
+  .revised-heading {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--accent);
+    margin: 24px 4px 0;
+  }
 
   .status {
     text-align: center;
@@ -765,7 +848,11 @@
     <button class="today-btn" id="today-btn" hidden>Today</button>
   </div>
   <div class="week-strip" id="week-strip"></div>
-  <button class="primary-btn" id="snap-btn">Snap food</button>
+  <div class="log-actions">
+    <button class="primary-btn" id="snap-btn">Snap food</button>
+    <button class="describe-btn" id="describe-btn">Describe</button>
+  </div>
+  <div class="log-target" id="log-target" hidden></div>
   <input type="file" id="photo-input" accept="image/*">
   <div class="day-totals" id="day-totals">—</div>
   <div id="meal-sections"></div>
@@ -780,6 +867,16 @@
 
   <div id="status" class="status"></div>
   <div id="result"></div>
+
+  <div class="note-panel" id="note-panel" hidden>
+    <label class="field-label" for="note-input" id="note-label"></label>
+    <div class="note-box">
+      <textarea class="text-input" id="note-input" rows="3"></textarea>
+      <button class="mic-btn" id="note-mic" type="button" aria-label="Dictate"></button>
+    </div>
+    <div class="note-hint" id="note-hint"></div>
+    <button id="note-submit"></button>
+  </div>
 
   <div id="label-prompt" class="label-prompt" hidden>Save under which meal?</div>
   <div class="meal-type-buttons" id="meal-type-buttons" hidden>
@@ -798,6 +895,19 @@
     <span class="view-nav-spacer"></span>
   </div>
   <div id="entry-detail"></div>
+
+  <div class="note-panel" id="entry-note-panel">
+    <label class="field-label" for="entry-note-input">Not quite right?</label>
+    <div class="note-box">
+      <textarea class="text-input" id="entry-note-input" rows="3"
+        placeholder="e.g. it was a large portion, and the sauce was pesto not tomato"></textarea>
+      <button class="mic-btn" id="entry-note-mic" type="button" aria-label="Dictate"></button>
+    </div>
+    <div class="note-hint" id="entry-note-hint"></div>
+    <button class="secondary-btn" id="entry-note-submit">Update estimate</button>
+  </div>
+  <div id="entry-revised"></div>
+
   <button class="danger-btn" id="entry-delete">Delete entry</button>
 </section>
 
@@ -937,6 +1047,9 @@ let profileData = null;      // { profile, targets } from /profile
 let setupReturnView = 'day'; // where the setup view goes back to
 let pendingAnalysis = null;
 let pendingPreviewUrl = null;
+let pendingFile = null;      // photo being reviewed (null when describing in text)
+let pendingNotes = [];       // what the user typed/said during this review
+let entryRevision = null;    // corrected estimate for the open entry, not yet saved
 
 const views = {
   day: document.getElementById('day-view'),
@@ -954,7 +1067,18 @@ const dayTotals = document.getElementById('day-totals');
 const weekStripEl = document.getElementById('week-strip');
 const mealSections = document.getElementById('meal-sections');
 const snapBtn = document.getElementById('snap-btn');
+const describeBtn = document.getElementById('describe-btn');
+const logTarget = document.getElementById('log-target');
 const photoInput = document.getElementById('photo-input');
+const notePanel = document.getElementById('note-panel');
+const noteLabel = document.getElementById('note-label');
+const noteInput = document.getElementById('note-input');
+const noteHint = document.getElementById('note-hint');
+const noteSubmit = document.getElementById('note-submit');
+const entryNoteInput = document.getElementById('entry-note-input');
+const entryNoteHint = document.getElementById('entry-note-hint');
+const entryNoteSubmit = document.getElementById('entry-note-submit');
+const entryRevised = document.getElementById('entry-revised');
 const cancelBtn = document.getElementById('cancel-btn');
 const statusEl = document.getElementById('status');
 const resultEl = document.getElementById('result');
@@ -1122,9 +1246,8 @@ async function loadDay() {
   monthLabel.textContent = dateObj.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   todayBtn.hidden = currentDate === today;
   // Saves go to the selected day, so say so when it isn't today
-  snapBtn.textContent = currentDate === today
-    ? 'Snap food'
-    : `Snap food for ${currentDate === shiftDate(today, -1) ? 'yesterday' : formatDateLabel(currentDate)}`;
+  logTarget.hidden = currentDate === today;
+  logTarget.textContent = `Saving to ${currentDate === shiftDate(today, -1) ? 'yesterday' : formatDateLabel(currentDate)}`;
 
   // Render strip in parallel with the day's meal data
   renderWeekStrip();
@@ -1239,42 +1362,94 @@ views.day.addEventListener('touchend', (e) => {
 
 function openEntry(meal) {
   currentEntry = meal;
+  entryRevision = null;
+  entryRevised.innerHTML = '';
+  entryNoteInput.value = '';
+  entryNoteHint.textContent = '';
   const typeLabel = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snack: 'Snack' }[meal.meal_type];
   entryTitle.textContent = `${typeLabel} · ${formatDateLabel(meal.date)}`;
 
-  const totalCal = meal.items.reduce((s, i) => s + i.calories, 0);
-  const totalGrams = meal.items.reduce((s, i) => s + i.grams, 0);
-  const m = sumMacros(meal.items);
-  const itemsHtml = meal.items.map(item => `
-    <div class="item">
-      <div class="item-name">${escapeHtml(item.name)}</div>
-      <div class="item-meta">
-        <span>${Math.round(item.grams)}g</span>
-        <span>${fmt(item.calories)} cal</span>
-        <span class="pill ${escapeHtml(item.confidence)}">${escapeHtml(item.confidence)}</span>
-      </div>
-      ${item.protein_g !== null && item.protein_g !== undefined
-        ? `<div class="item-macros">P ${Math.round(item.protein_g)}g · C ${Math.round(item.carbs_g || 0)}g · F ${Math.round(item.fat_g || 0)}g</div>`
-        : ''}
-    </div>
-  `).join('');
-
-  entryDetail.innerHTML = `
-    <div class="description">${escapeHtml(meal.description)}</div>
-    <div class="items">${itemsHtml}</div>
-    <div class="totals">
-      <span>${meal.items.length} item${meal.items.length === 1 ? '' : 's'} · ${Math.round(totalGrams)}g</span>
-      <span>~${fmt(totalCal)} cal</span>
-    </div>
-    ${m ? `<div class="totals-macros">${macroText(m)}</div>` : ''}
-  `;
+  entryDetail.innerHTML = analysisHtml(entryAsAnalysis(meal)) + (meal.note
+    ? `<div class="entry-note"><strong>Your notes:</strong> ${escapeHtml(meal.note)}</div>`
+    : '');
   showView('entry');
+}
+
+// Saved meals use DB field names; the analysis endpoints use MealAnalysis's
+function entryAsAnalysis(meal) {
+  return {
+    description: meal.description,
+    items: meal.items.map(i => ({
+      name: i.name,
+      estimated_grams: i.grams,
+      calories_estimate: i.calories,
+      protein_g: i.protein_g,
+      carbs_g: i.carbs_g,
+      fat_g: i.fat_g,
+      confidence: i.confidence,
+    })),
+  };
+}
+
+function joinNotes(...notes) {
+  return notes.filter(Boolean).join('; ') || null;
 }
 
 entryBack.addEventListener('click', () => {
   currentEntry = null;
   showView('day');
 });
+
+entryNoteSubmit.addEventListener('click', async () => {
+  const note = entryNoteInput.value.trim();
+  if (!currentEntry || !note) return;
+  entryNoteSubmit.disabled = true;
+  entryRevised.innerHTML = '<div class="status pulsing">Updating with Claude (15–30s)…</div>';
+  const formData = new FormData();
+  formData.append('note', note);
+  formData.append('previous', JSON.stringify(entryAsAnalysis(currentEntry)));
+  try {
+    const r = await api('/analyze', { method: 'POST', body: formData });
+    if (!r.ok) throw new Error(await errorMessage(r));
+    entryRevision = { analysis: await r.json(), note };
+    entryRevised.innerHTML = `
+      <div class="revised-heading">Revised estimate</div>
+      ${analysisHtml(entryRevision.analysis)}
+      <button class="primary-btn" id="entry-save" style="margin-top: 16px;">Save changes</button>
+      <button class="secondary-btn" id="entry-discard">Discard</button>`;
+    document.getElementById('entry-save').addEventListener('click', saveEntryRevision);
+    document.getElementById('entry-discard').addEventListener('click', () => {
+      entryRevision = null;
+      entryRevised.innerHTML = '';
+    });
+  } catch (err) {
+    entryRevised.innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
+  } finally {
+    entryNoteSubmit.disabled = false;
+  }
+});
+
+async function saveEntryRevision() {
+  if (!currentEntry || !entryRevision) return;
+  const id = currentEntry.id;
+  try {
+    const r = await api(`/entries/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        analysis: entryRevision.analysis,
+        note: joinNotes(currentEntry.note, entryRevision.note),
+      }),
+    });
+    if (!r.ok) throw new Error(await errorMessage(r));
+    summaryCache.clear();
+    await loadDay();
+    const updated = dayMeals.find(m => m.id === id);
+    if (updated) openEntry(updated); else showView('day');
+  } catch (err) {
+    entryRevised.insertAdjacentHTML('beforeend', `<div class="error">${escapeHtml(err.message)}</div>`);
+  }
+}
 
 entryDelete.addEventListener('click', async () => {
   if (!currentEntry || !confirm('Delete this entry?')) return;
@@ -1291,77 +1466,222 @@ entryDelete.addEventListener('click', async () => {
 });
 
 // ============================================================================
-// Photo capture + review
+// Dictation: mic button next to a text box. Uses the browser's speech
+// recognition where available; elsewhere the button hides and the
+// keyboard's own dictation mic still works.
 // ============================================================================
 
-snapBtn.addEventListener('click', () => photoInput.click());
+const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+const MIC_ICON = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10v1a7 7 0 0 0 14 0v-1"></path><line x1="12" y1="18" x2="12" y2="22"></line></svg>`;
+const LISTENING_HINT = 'Listening… tap the mic to stop';
 
-cancelBtn.addEventListener('click', () => {
+function attachMic(button, textarea, hintEl) {
+  if (!SpeechRecognitionImpl) {
+    button.hidden = true;
+    return;
+  }
+  button.innerHTML = MIC_ICON;
+  let recognition = null;
+
+  button.addEventListener('click', () => {
+    if (recognition) {
+      recognition.stop();
+      return;
+    }
+    recognition = new SpeechRecognitionImpl();
+    recognition.lang = navigator.language || 'en-GB';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    const existing = textarea.value.trim();
+
+    recognition.onresult = (e) => {
+      const spoken = Array.from(e.results).map(r => r[0].transcript).join('');
+      textarea.value = existing ? `${existing} ${spoken}` : spoken;
+    };
+    recognition.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        hintEl.textContent = "Microphone access isn't available here. Use the keyboard's mic instead.";
+      } else if (e.error === 'no-speech') {
+        hintEl.textContent = "Didn't catch that. Tap the mic and try again.";
+      } else {
+        hintEl.textContent = `Couldn't transcribe (${e.error}).`;
+      }
+    };
+    recognition.onend = () => {
+      recognition = null;
+      button.classList.remove('recording');
+      if (hintEl.textContent === LISTENING_HINT) hintEl.textContent = '';
+    };
+
+    hintEl.textContent = LISTENING_HINT;
+    button.classList.add('recording');
+    try {
+      recognition.start();
+    } catch (err) {
+      recognition = null;
+      button.classList.remove('recording');
+      hintEl.textContent = `Couldn't start the microphone (${err.message}).`;
+    }
+  });
+}
+
+attachMic(document.getElementById('note-mic'), noteInput, noteHint);
+attachMic(document.getElementById('entry-note-mic'), entryNoteInput, entryNoteHint);
+
+// ============================================================================
+// Logging: photo and/or description -> review -> save
+// ============================================================================
+
+async function errorMessage(response) {
+  const text = await response.text();
+  try {
+    const detail = JSON.parse(text).detail;
+    if (typeof detail === 'string') return detail;
+  } catch (e) { /* not JSON */ }
+  return `Server error ${response.status}: ${text}`;
+}
+
+function resetReview() {
   pendingAnalysis = null;
+  pendingFile = null;
+  pendingNotes = [];
   if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); pendingPreviewUrl = null; }
-  showView('day');
-});
-
-photoInput.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  showView('review');
   resultEl.innerHTML = '';
+  statusEl.textContent = '';
+  noteInput.value = '';
+  noteHint.textContent = '';
+  notePanel.hidden = true;
   labelPrompt.hidden = true;
   mealTypeButtons.hidden = true;
   redoBtn.hidden = false;
+}
 
-  if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
+// mode is "describe" (first description, nothing analysed yet) or
+// "correct" (an estimate exists and the text adjusts it)
+function showNotePanel(mode) {
+  const describing = mode === 'describe';
+  notePanel.hidden = false;
+  noteLabel.textContent = describing ? 'What did you have?' : 'Not quite right? Say what to change';
+  noteInput.placeholder = describing
+    ? 'e.g. two slices of sourdough with peanut butter and a banana'
+    : 'e.g. it was oat milk, and the curry had chickpeas in it';
+  noteSubmit.textContent = describing ? 'Analyse' : 'Update estimate';
+  noteSubmit.className = describing ? 'primary-btn' : 'secondary-btn';
+}
+
+snapBtn.addEventListener('click', () => photoInput.click());
+
+describeBtn.addEventListener('click', () => {
+  resetReview();
+  showView('review');
+  showNotePanel('describe');
+  noteInput.focus();
+});
+
+cancelBtn.addEventListener('click', () => {
+  resetReview();
+  showView('day');
+});
+
+redoBtn.addEventListener('click', () => {
+  resetReview();
+  showView('day');
+});
+
+photoInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  photoInput.value = '';
+  if (!file) return;
+  resetReview();
+  pendingFile = file;
   pendingPreviewUrl = URL.createObjectURL(file);
   resultEl.innerHTML = `<img class="preview" src="${pendingPreviewUrl}" alt="meal">`;
+  showView('review');
+  runAnalysis(null);
+});
 
+noteSubmit.addEventListener('click', () => {
+  const note = noteInput.value.trim();
+  if (note) runAnalysis(note);
+});
+
+async function runAnalysis(note) {
+  labelPrompt.hidden = true;
+  mealTypeButtons.hidden = true;
+  noteSubmit.disabled = true;
+  resultEl.querySelectorAll('.error').forEach(el => el.remove());
   statusEl.textContent = 'Sending to Claude (15–30s)…';
   statusEl.classList.add('pulsing');
 
   const formData = new FormData();
-  formData.append('photo', file);
+  if (pendingFile) formData.append('photo', pendingFile);
+  if (note) formData.append('note', note);
+  if (note && pendingAnalysis) formData.append('previous', JSON.stringify(pendingAnalysis));
 
   try {
     const response = await api('/analyze', { method: 'POST', body: formData });
-    if (!response.ok) throw new Error(`Server error ${response.status}: ${await response.text()}`);
+    if (!response.ok) throw new Error(await errorMessage(response));
     pendingAnalysis = await response.json();
+    if (note) pendingNotes.push(note);
+    noteInput.value = '';
     renderAnalysis(pendingAnalysis);
+    showNotePanel('correct');
     labelPrompt.hidden = false;
     mealTypeButtons.hidden = false;
   } catch (err) {
     resultEl.insertAdjacentHTML('beforeend', `<div class="error">${escapeHtml(err.message)}</div>`);
+    if (pendingAnalysis) {
+      // Keep the earlier estimate usable
+      labelPrompt.hidden = false;
+      mealTypeButtons.hidden = false;
+    } else {
+      showNotePanel(pendingFile ? 'correct' : 'describe');
+    }
   } finally {
     statusEl.textContent = '';
     statusEl.classList.remove('pulsing');
-    photoInput.value = '';
+    noteSubmit.disabled = false;
   }
-});
+}
 
-function renderAnalysis(data) {
+// Description, items and totals for a MealAnalysis-shaped object
+function analysisHtml(data) {
   const totalCal = data.items.reduce((s, i) => s + i.calories_estimate, 0);
   const totalGrams = data.items.reduce((s, i) => s + i.estimated_grams, 0);
+  const m = sumMacros(data.items);
 
   const itemsHtml = data.items.map(item => `
     <div class="item">
       <div class="item-name">${escapeHtml(item.name)}</div>
       <div class="item-meta">
         <span>${Math.round(item.estimated_grams)}g</span>
-        <span>${item.calories_estimate} cal</span>
-        <span class="pill ${item.confidence}">${item.confidence}</span>
+        <span>${fmt(item.calories_estimate)} cal</span>
+        <span class="pill ${escapeHtml(item.confidence)}">${escapeHtml(item.confidence)}</span>
       </div>
+      ${item.protein_g !== null && item.protein_g !== undefined
+        ? `<div class="item-macros">P ${Math.round(item.protein_g)}g · C ${Math.round(item.carbs_g || 0)}g · F ${Math.round(item.fat_g || 0)}g</div>`
+        : ''}
     </div>
   `).join('');
 
-  resultEl.innerHTML = `
-    <img class="preview" src="${pendingPreviewUrl}" alt="meal">
+  return `
     <div class="description">${escapeHtml(data.description)}</div>
     <div class="items">${itemsHtml}</div>
     <div class="totals">
       <span>${data.items.length} item${data.items.length === 1 ? '' : 's'} · ${Math.round(totalGrams)}g</span>
-      <span>~${totalCal} cal</span>
+      <span>~${fmt(totalCal)} cal</span>
     </div>
+    ${m ? `<div class="totals-macros">${macroText(m)}</div>` : ''}
   `;
+}
+
+function renderAnalysis(data) {
+  const preview = pendingPreviewUrl ? `<img class="preview" src="${pendingPreviewUrl}" alt="meal">` : '';
+  const notes = pendingNotes.length
+    ? `<div class="entry-note"><strong>Your notes:</strong> ${escapeHtml(pendingNotes.join('; '))}</div>`
+    : '';
+  resultEl.innerHTML = preview + analysisHtml(data) + notes;
 }
 
 mealTypeButtons.addEventListener('click', async (e) => {
@@ -1371,6 +1691,7 @@ mealTypeButtons.addEventListener('click', async (e) => {
   const mealType = btn.dataset.type;
   labelPrompt.hidden = true;
   mealTypeButtons.hidden = true;
+  notePanel.hidden = true;
   redoBtn.hidden = true;
   statusEl.textContent = 'Saving…';
 
@@ -1382,11 +1703,12 @@ mealTypeButtons.addEventListener('click', async (e) => {
         date: currentDate,
         meal_type: mealType,
         analysis: pendingAnalysis,
+        note: joinNotes(...pendingNotes),
+        source: pendingFile ? 'photo' : 'text',
       }),
     });
-    if (!response.ok) throw new Error(`Save failed: ${await response.text()}`);
-    pendingAnalysis = null;
-    if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); pendingPreviewUrl = null; }
+    if (!response.ok) throw new Error(`Save failed: ${await errorMessage(response)}`);
+    resetReview();
     summaryCache.clear();
     showView('day');
     await loadDay();
@@ -1394,16 +1716,11 @@ mealTypeButtons.addEventListener('click', async (e) => {
     resultEl.insertAdjacentHTML('beforeend', `<div class="error">${escapeHtml(err.message)}</div>`);
     labelPrompt.hidden = false;
     mealTypeButtons.hidden = false;
+    notePanel.hidden = false;
     redoBtn.hidden = false;
   } finally {
     statusEl.textContent = '';
   }
-});
-
-redoBtn.addEventListener('click', () => {
-  pendingAnalysis = null;
-  if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); pendingPreviewUrl = null; }
-  showView('day');
 });
 
 // ============================================================================
@@ -1698,7 +2015,7 @@ function loggingCalendarHtml(data) {
     </div>`;
 }
 
-function analysisHtml(a, error) {
+function summaryAnalysisHtml(a, error) {
   // The stats below still render when Claude's analysis failed
   if (!a) {
     return `
@@ -1739,7 +2056,7 @@ function renderSummary(data) {
       ${quickNumbersHtml(data)}
     </div>
 
-    ${analysisHtml(data.analysis, data.analysis_error)}
+    ${summaryAnalysisHtml(data.analysis, data.analysis_error)}
 
     <div class="summary-section">
       <div class="summary-section-header"><span>Daily calories</span></div>
