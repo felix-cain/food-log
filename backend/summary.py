@@ -21,6 +21,7 @@ import anthropic
 from pydantic import BaseModel, Field
 
 from .db import get_cached_analysis, get_profile, list_meals_between, save_cached_analysis
+from .health import format_for_analysis, recent_active_kcal_avg
 from .targets import Profile, Targets, compute_targets
 
 MAIN_MEALS = ("breakfast", "lunch", "dinner")
@@ -99,10 +100,12 @@ Guidance:
 - Where a meal includes "their own words", that's what the person said they ate. Treat it as the most reliable part of the record.
 - Days marked "(partial)" are missing at least one of breakfast, lunch or dinner. Their totals are probably incomplete — don't read a low-calorie partial day as under-eating. Days marked "(nothing logged)" are unknown, not fasting.
 
+- If sleep and activity data from their watch is included, look for links with eating where the data supports them: e.g. short or poor sleep followed by higher-calorie or more snack-heavy days, intake on training days versus rest days, protein after hard sessions. "Night before" on a date is the sleep that ended that morning. Days without watch data are unknown, not zero.
+
 Don't invent patterns the data doesn't support. Treat the user as someone who wants honest feedback, not encouragement.
 {context}
 Data:
-{data}"""
+{data}{health}"""
 
 _GOAL_TEXT = {"lose": "lose weight", "maintain": "maintain weight", "gain": "gain weight"}
 _ACTIVITY_TEXT = {
@@ -116,11 +119,15 @@ _ACTIVITY_TEXT = {
 def _format_context(profile: Profile | None, targets: Targets | None) -> str:
     if not profile or not targets:
         return ""
+    basis = (
+        f" (calories based on their watch's measured activity, ~{targets.active_kcal_avg} active kcal/day)"
+        if targets.basis == "garmin" else ""
+    )
     return (
         f"\nTheir goal is to {_GOAL_TEXT[profile.goal]}; activity level: "
         f"{_ACTIVITY_TEXT[profile.activity]}. Estimated daily targets: "
         f"~{targets.calories} cal ({targets.calories_low}-{targets.calories_high}), "
-        f"~{targets.protein_g}g protein. Compare against these where the data allows.\n"
+        f"~{targets.protein_g}g protein{basis}. Compare against these where the data allows.\n"
     )
 
 
@@ -160,15 +167,17 @@ def _is_full_day(meals: list[dict]) -> bool:
     return all(t in types for t in MAIN_MEALS)
 
 
-def _fingerprint(start: str, end: str, meals: list[dict], profile: dict | None) -> str:
+def _fingerprint(start: str, end: str, meals: list[dict], profile: dict | None, health: str) -> str:
     """Changes whenever the analysis input changes, so the cache invalidates."""
-    parts = [start, end, profile["updated_at"] if profile else "no-profile"]
+    # health is the formatted watch data, so re-syncing unchanged data keeps the cache
+    parts = [start, end, profile["updated_at"] if profile else "no-profile", health]
     parts += [f"{m['id']}:{len(m['items'])}:{m.get('updated_at') or ''}" for m in meals]
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
 def build_summary(days: int = 7, today: date | None = None, refresh: bool = False) -> SummaryResponse:
-    end = (today or date.today()) - timedelta(days=1)
+    today = today or date.today()
+    end = today - timedelta(days=1)
     start = end - timedelta(days=days - 1)
     dates = [(start + timedelta(days=i)).isoformat() for i in range(days)]
 
@@ -179,7 +188,8 @@ def build_summary(days: int = 7, today: date | None = None, refresh: bool = Fals
 
     profile_row = get_profile()
     profile = Profile(**profile_row) if profile_row else None
-    targets = compute_targets(profile) if profile else None
+    targets = compute_targets(profile, recent_active_kcal_avg(today)) if profile else None
+    health_text = format_for_analysis(dates)
 
     # Per-day totals
     daily_totals: list[DailyTotal] = []
@@ -225,7 +235,7 @@ def build_summary(days: int = 7, today: date | None = None, refresh: bool = Fals
 
     # Claude analysis, cached until the data changes. Failures are reported
     # alongside the stats rather than failing the whole request.
-    fingerprint = _fingerprint(dates[0], dates[-1], meals, profile_row)
+    fingerprint = _fingerprint(dates[0], dates[-1], meals, profile_row, health_text)
     cached = None if refresh else get_cached_analysis(days, fingerprint)
     analysis: ClaudeAnalysis | None = None
     analysis_error: str | None = None
@@ -236,6 +246,7 @@ def build_summary(days: int = 7, today: date | None = None, refresh: bool = Fals
             days=days,
             context=_format_context(profile, targets),
             data=_format_meal_data(daily_meals),
+            health=f"\n\nSleep and activity from their watch:\n{health_text}" if health_text else "",
         )
         try:
             analysis = _run_analysis(prompt)

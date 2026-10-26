@@ -11,11 +11,14 @@ Endpoints:
     GET  /profile          - Profile + derived calorie/protein targets (nulls if unset)
     PUT  /profile          - Save the profile
     GET  /summary?days=... - Stats + Claude analysis for the N days ending yesterday
+    POST /sync             - Pull recent Garmin data (skipped if synced in the last hour)
+    GET  /sleep?days=...   - Nights of sleep, newest data from the last sync
+    GET  /fitness?days=... - Daily activity totals + workouts
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -26,6 +29,7 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from .auth import require_token
+from . import health
 from .db import (
     delete_meal,
     get_profile,
@@ -148,20 +152,51 @@ class ProfileResponse(BaseModel):
     targets: Targets | None
 
 
-def _profile_response() -> ProfileResponse:
+def _profile_response(today: date | None) -> ProfileResponse:
     row = get_profile()
     if not row:
         return ProfileResponse(profile=None, targets=None)
     profile = Profile(**row)
-    return ProfileResponse(profile=profile, targets=compute_targets(profile))
+    active = health.recent_active_kcal_avg(today or date.today())
+    return ProfileResponse(profile=profile, targets=compute_targets(profile, active))
 
 
 @app.get("/profile", response_model=ProfileResponse, dependencies=[Depends(require_token)])
-def read_profile() -> ProfileResponse:
-    return _profile_response()
+def read_profile(today: date | None = None) -> ProfileResponse:
+    return _profile_response(today)
 
 
 @app.put("/profile", response_model=ProfileResponse, dependencies=[Depends(require_token)])
-def update_profile(profile: Profile) -> ProfileResponse:
+def update_profile(profile: Profile, today: date | None = None) -> ProfileResponse:
     save_profile(profile.model_dump())
-    return _profile_response()
+    return _profile_response(today)
+
+
+# ============================================================================
+# Wearables (Garmin)
+# ============================================================================
+
+
+def _window(days: int, today: date | None) -> tuple[str, str]:
+    if days < 1 or days > 90:
+        raise HTTPException(400, "days must be between 1 and 90")
+    end = today or date.today()
+    return (end - timedelta(days=days - 1)).isoformat(), end.isoformat()
+
+
+@app.post("/sync", dependencies=[Depends(require_token)])
+def sync(today: date | None = None, force: bool = False) -> dict:
+    result = health.sync_garmin(today or date.today(), force=force)
+    return {**result, **health.sync_status()}
+
+
+@app.get("/sleep", dependencies=[Depends(require_token)])
+def get_sleep(days: int = 14, today: date | None = None) -> dict:
+    start, end = _window(days, today)
+    return {**health.sync_status(), "start": start, "end": end, "nights": health.sleep_between(start, end)}
+
+
+@app.get("/fitness", dependencies=[Depends(require_token)])
+def get_fitness(days: int = 14, today: date | None = None) -> dict:
+    start, end = _window(days, today)
+    return {**health.sync_status(), "start": start, "end": end, **health.fitness_between(start, end)}

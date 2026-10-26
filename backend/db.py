@@ -173,6 +173,73 @@ CREATE TABLE IF NOT EXISTS summary_cache (
     analysis_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+-- Wearable data. `source` leaves room for Eight Sleep alongside Garmin.
+-- night_date is the date you woke up, so night N lines up with food on day N.
+CREATE TABLE IF NOT EXISTS sleep_night (
+    night_date TEXT NOT NULL,
+    source TEXT NOT NULL,
+    sleep_seconds REAL,
+    deep_seconds REAL,
+    light_seconds REAL,
+    rem_seconds REAL,
+    awake_seconds REAL,
+    sleep_score REAL,
+    bedtime_local TEXT,
+    wake_local TEXT,
+    resting_hr REAL,
+    hrv_ms REAL,
+    hrv_status TEXT,
+    raw_json TEXT,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (night_date, source)
+);
+
+CREATE TABLE IF NOT EXISTS daily_activity (
+    local_date TEXT NOT NULL,
+    source TEXT NOT NULL,
+    steps REAL,
+    active_kcal REAL,
+    bmr_kcal REAL,
+    total_kcal REAL,
+    resting_hr REAL,
+    moderate_min REAL,
+    vigorous_min REAL,
+    body_battery_charged REAL,
+    body_battery_drained REAL,
+    raw_json TEXT,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (local_date, source)
+);
+
+CREATE TABLE IF NOT EXISTS activity (
+    source TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    local_date TEXT NOT NULL,
+    start_local TEXT,
+    activity_type TEXT,
+    name TEXT,
+    duration_s REAL,
+    distance_m REAL,
+    calories REAL,
+    avg_hr REAL,
+    max_hr REAL,
+    training_load REAL,
+    aerobic_te REAL,
+    raw_json TEXT,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (source, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_date ON activity(local_date);
+
+CREATE TABLE IF NOT EXISTS sync_state (
+    source TEXT PRIMARY KEY,
+    last_synced_date TEXT,
+    last_success_at TEXT,
+    last_attempt_at TEXT,
+    last_error TEXT
+);
 """
 
 # Columns added after the initial schema. Run ADD COLUMN idempotently on
@@ -380,3 +447,103 @@ def save_cached_analysis(period_days: int, fingerprint: str, analysis_json: str)
             "(period_days, fingerprint, analysis_json, created_at) VALUES (?, ?, ?, ?)",
             (period_days, fingerprint, analysis_json, created_at),
         )
+
+
+# ============================================================================
+# Wearable data (sleep, daily activity, workouts) + sync bookkeeping
+# ============================================================================
+
+_SLEEP_COLUMNS = (
+    "night_date", "source", "sleep_seconds", "deep_seconds", "light_seconds", "rem_seconds",
+    "awake_seconds", "sleep_score", "bedtime_local", "wake_local", "resting_hr", "hrv_ms",
+    "hrv_status", "raw_json", "fetched_at",
+)
+_DAILY_COLUMNS = (
+    "local_date", "source", "steps", "active_kcal", "bmr_kcal", "total_kcal", "resting_hr",
+    "moderate_min", "vigorous_min", "body_battery_charged", "body_battery_drained",
+    "raw_json", "fetched_at",
+)
+_ACTIVITY_COLUMNS = (
+    "source", "source_id", "local_date", "start_local", "activity_type", "name", "duration_s",
+    "distance_m", "calories", "avg_hr", "max_hr", "training_load", "aerobic_te",
+    "raw_json", "fetched_at",
+)
+
+
+def _upsert(table: str, columns: tuple[str, ...], rows: list[dict]) -> None:
+    # Table and column names come from the constants above, never from input
+    if not rows:
+        return
+    sql = (
+        f"INSERT OR REPLACE INTO {table} ({', '.join(columns)}) "
+        f"VALUES ({', '.join('?' for _ in columns)})"
+    )
+    with _connect() as conn:
+        for row in rows:
+            conn.execute(sql, tuple(row.get(c) for c in columns))
+
+
+def _select(table: str, columns: tuple[str, ...], date_col: str, start: str, end: str) -> list[dict]:
+    cols = [c for c in columns if c != "raw_json"]
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT {', '.join(cols)} FROM {table} WHERE {date_col} BETWEEN ? AND ? "
+            f"ORDER BY {date_col}",
+            (start, end),
+        ).fetchall()
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def upsert_sleep_nights(rows: list[dict]) -> None:
+    _upsert("sleep_night", _SLEEP_COLUMNS, rows)
+
+
+def upsert_daily_activity(rows: list[dict]) -> None:
+    _upsert("daily_activity", _DAILY_COLUMNS, rows)
+
+
+def upsert_activities(rows: list[dict]) -> None:
+    _upsert("activity", _ACTIVITY_COLUMNS, rows)
+
+
+def list_sleep_between(start: str, end: str) -> list[dict]:
+    return _select("sleep_night", _SLEEP_COLUMNS, "night_date", start, end)
+
+
+def list_daily_activity_between(start: str, end: str) -> list[dict]:
+    return _select("daily_activity", _DAILY_COLUMNS, "local_date", start, end)
+
+
+def list_activities_between(start: str, end: str) -> list[dict]:
+    return _select("activity", _ACTIVITY_COLUMNS, "local_date", start, end)
+
+
+def get_sync_state(source: str) -> dict | None:
+    cols = ("source", "last_synced_date", "last_success_at", "last_attempt_at", "last_error")
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT {', '.join(cols)} FROM sync_state WHERE source = ?", (source,)
+        ).fetchall()
+    return dict(zip(cols, rows[0])) if rows else None
+
+
+def save_sync_state(
+    source: str, *, synced_date: str | None = None, error: str | None = None
+) -> None:
+    """Record a sync attempt; a success (no error) also advances last_synced_date."""
+    now = datetime.now(timezone.utc).isoformat()
+    previous = get_sync_state(source) or {}
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO sync_state "
+            "(source, last_synced_date, last_success_at, last_attempt_at, last_error) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                source,
+                synced_date if error is None else previous.get("last_synced_date"),
+                now if error is None else previous.get("last_success_at"),
+                now,
+                error,
+            ),
+        )
+

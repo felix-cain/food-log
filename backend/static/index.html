@@ -48,6 +48,11 @@
     --dot-empty: #e0a030;
     --dot-partial: #6bbf59;
     --dot-full: #2e7d32;
+    /* Sleep stages: data colours, deepest sleep darkest */
+    --sleep-deep: #2f4b7c;
+    --sleep-light: #a9bde0;
+    --sleep-rem: #7a6fc4;
+    --sleep-awake: #e0a030;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -80,6 +85,10 @@
       --dot-empty: #e0a030;
       --dot-partial: #a5d69a;
       --dot-full: #43a047;
+      --sleep-deep: #8fa9e8;
+      --sleep-light: #3b4763;
+      --sleep-rem: #a99bf0;
+      --sleep-awake: #e0a030;
     }
   }
 
@@ -814,6 +823,47 @@
   .cal-cell { display: flex; flex-direction: column; align-items: center; gap: 3px; min-height: 26px; }
   .cal-num { font-size: 10px; color: var(--text-faint); line-height: 1; }
   .cal-dot { width: 10px; height: 10px; }
+
+  /* ===== Sleep + Fitness (Garmin) ===== */
+  .sync-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-faint);
+    margin: 4px 4px 16px;
+  }
+  .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .stat { background: var(--surface); border-radius: 12px; padding: 12px 14px; }
+  .stat-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-faint);
+  }
+  .stat-value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .stat-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .list-card { background: var(--surface); border-radius: 12px; padding: 0 16px; }
+  .list-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+  }
+  .list-row:not(:last-child) { border-bottom: 1px solid var(--divider); }
+  .list-row-main { font-size: 15px; font-weight: 500; }
+  .list-row-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .list-row-value { text-align: right; white-space: nowrap; font-size: 15px; font-weight: 500; }
+  .stage-bar { display: flex; height: 6px; width: 140px; border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .stage-deep { background: var(--sleep-deep); }
+  .stage-light { background: var(--sleep-light); }
+  .stage-rem { background: var(--sleep-rem); }
+  .stage-awake { background: var(--sleep-awake); }
+  .lg-dot.stage-deep, .lg-dot.stage-light, .lg-dot.stage-rem, .lg-dot.stage-awake { border-radius: 2px; }
+  .target-note { font-size: 13px; color: var(--text-muted); line-height: 1.5; margin: 0 4px 16px; }
 </style>
 </head>
 <body>
@@ -966,9 +1016,29 @@
   <div id="summary-content"></div>
 </section>
 
+<section id="sleep-view" hidden>
+  <header>
+    <h1 class="summary-title">Sleep</h1>
+    <div class="summary-subtitle">Last 14 nights from your Garmin.</div>
+  </header>
+  <div class="sync-line" id="sleep-sync"></div>
+  <div id="sleep-content"></div>
+</section>
+
+<section id="fitness-view" hidden>
+  <header>
+    <h1 class="summary-title">Fitness</h1>
+    <div class="summary-subtitle">Last 14 days from your Garmin.</div>
+  </header>
+  <div class="sync-line" id="fitness-sync"></div>
+  <div id="fitness-content"></div>
+</section>
+
 <nav class="tab-bar" id="tab-bar">
   <button class="tab" data-tab="summary">Summary</button>
   <button class="tab active" data-tab="day">Food Log</button>
+  <button class="tab" data-tab="sleep">Sleep</button>
+  <button class="tab" data-tab="fitness">Fitness</button>
 </nav>
 
 <script>
@@ -1031,6 +1101,8 @@ const views = {
   entry: document.getElementById('entry-view'),
   setup: document.getElementById('setup-view'),
   summary: document.getElementById('summary-view'),
+  sleep: document.getElementById('sleep-view'),
+  fitness: document.getElementById('fitness-view'),
 };
 const tabBar = document.getElementById('tab-bar');
 const summaryContent = document.getElementById('summary-content');
@@ -1122,7 +1194,7 @@ function macroText(m) {
 function showView(name) {
   for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
   // Tab bar shows on the two top-level tabs, hides in sub-views
-  const topLevel = name === 'day' || name === 'summary';
+  const topLevel = ['day', 'summary', 'sleep', 'fitness'].includes(name);
   tabBar.classList.toggle('hidden', !topLevel);
   document.body.classList.toggle('no-tab-bar', !topLevel);
   document.querySelectorAll('.tab').forEach(t => {
@@ -1675,7 +1747,7 @@ setupForm.addEventListener('submit', async (e) => {
 
   setupSave.disabled = true;
   try {
-    const r = await api('/profile', {
+    const r = await api(`/profile?today=${todayISO()}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1727,6 +1799,9 @@ document.querySelectorAll('.tab').forEach(t => {
     } else if (tab === 'summary') {
       showView('summary');
       if (!summaryCache.has(currentPeriodDays)) loadSummary();
+    } else if (tab === 'sleep' || tab === 'fitness') {
+      showView(tab);
+      if (healthCache.has(tab)) renderHealthView(tab, healthCache.get(tab)); else loadHealthView(tab);
     }
   });
 });
@@ -1828,7 +1903,7 @@ function quickNumbersHtml(data) {
 
   const targetsLine = t
     ? `<div class="targets-line">
-         <span>Targets ~${fmt(t.calories)} cal · ${t.protein_g}g protein</span>
+         <span>Targets ~${fmt(t.calories)} cal · ${t.protein_g}g protein${t.basis === 'garmin' ? ' · calories from Garmin activity' : ''}</span>
          <button class="link-btn" data-edit-targets>Edit</button>
        </div>`
     : `<div class="targets-line">
@@ -1985,20 +2060,327 @@ function renderSummary(data) {
 }
 
 // ============================================================================
+// Sleep + Fitness (Garmin)
+// ============================================================================
+
+const HEALTH_DAYS = 14;
+const healthCache = new Map(); // 'sleep' | 'fitness' -> response
+let syncInFlight = null;
+
+function syncGarmin(force = false) {
+  if (syncInFlight) return syncInFlight;
+  syncInFlight = (async () => {
+    try {
+      const params = new URLSearchParams({ today: todayISO() });
+      if (force) params.set('force', 'true');
+      const r = await api(`/sync?${params}`, { method: 'POST' });
+      if (!r.ok) return { status: 'error', error: await errorMessage(r) };
+      const result = await r.json();
+      if (result.status === 'ok') {
+        // New watch data can change the analysis and the calorie target
+        healthCache.clear();
+        summaryCache.clear();
+        await refreshProfile();
+        for (const kind of ['sleep', 'fitness']) {
+          if (!views[kind].hidden) loadHealthView(kind);
+        }
+      }
+      return result;
+    } catch (e) {
+      return { status: 'error', error: e.message };
+    } finally {
+      syncInFlight = null;
+    }
+  })();
+  return syncInFlight;
+}
+
+async function loadHealthView(kind) {
+  const content = document.getElementById(`${kind}-content`);
+  if (!healthCache.has(kind)) content.innerHTML = '<div class="summary-loading pulsing">Loading…</div>';
+  try {
+    const params = new URLSearchParams({ days: HEALTH_DAYS, today: todayISO() });
+    const r = await api(`/${kind}?${params}`);
+    if (!r.ok) throw new Error(await errorMessage(r));
+    const data = await r.json();
+    healthCache.set(kind, data);
+    if (!views[kind].hidden) renderHealthView(kind, data);
+  } catch (err) {
+    content.innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderHealthView(kind, data) {
+  renderSyncLine(kind, data);
+  const content = document.getElementById(`${kind}-content`);
+  const hasData = kind === 'sleep' ? data.nights.length > 0 : (data.days.length > 0 || data.activities.length > 0);
+  if (!data.configured) {
+    content.innerHTML = `<div class="summary-empty">Garmin isn't connected yet. Add your Personal API key to Render
+      as <strong>GARMIN_PERSONAL_API_KEY</strong>, then reopen the app.</div>`;
+  } else if (!hasData) {
+    content.innerHTML = `<div class="summary-empty">${kind === 'sleep'
+      ? 'No sleep recorded in the last 14 nights. Wear your watch overnight and nights appear here once it syncs to Garmin Connect.'
+      : 'No activity recorded in the last 14 days. Wear your watch and it appears here once it syncs to Garmin Connect.'}</div>`;
+  } else {
+    content.innerHTML = kind === 'sleep' ? sleepHtml(data) : fitnessHtml(data);
+  }
+}
+
+function renderSyncLine(kind, data) {
+  const line = document.getElementById(`${kind}-sync`);
+  if (!data.configured) { line.innerHTML = ''; return; }
+  const when = data.last_success_at ? `synced ${relativeTime(data.last_success_at)}` : 'not synced yet';
+  line.innerHTML = `
+    <span>Garmin · ${when}${data.last_error ? ' · last sync failed' : ''}</span>
+    <button class="link-btn" data-sync-now>Sync now</button>`;
+  const btn = line.querySelector('[data-sync-now]');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Syncing…';
+    const result = await syncGarmin(true);
+    await loadHealthView(kind);
+    if (result && result.status === 'error') {
+      document.getElementById(`${kind}-content`).insertAdjacentHTML('afterbegin',
+        `<div class="error">${escapeHtml(result.error || 'Sync failed')}</div>`);
+    }
+  });
+}
+
+function relativeTime(iso) {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  return `${Math.round(hours / 24)} days ago`;
+}
+
+function dateRange(start, end) {
+  const out = [];
+  for (let d = start; d <= end; d = shiftDate(d, 1)) out.push(d);
+  return out;
+}
+
+function fmtDuration(seconds) {
+  if (!seconds) return '—';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
+}
+
+function average(values) {
+  const v = values.filter(x => x !== null && x !== undefined);
+  return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null;
+}
+
+function statHtml(label, value, sub = '') {
+  return `<div class="stat"><div class="stat-label">${label}</div>
+    <div class="stat-value">${value}</div>${sub ? `<div class="stat-sub">${sub}</div>` : ''}</div>`;
+}
+
+const STAGES = [
+  { key: 'deep_seconds', cls: 'stage-deep', label: 'Deep' },
+  { key: 'light_seconds', cls: 'stage-light', label: 'Light' },
+  { key: 'rem_seconds', cls: 'stage-rem', label: 'REM' },
+  { key: 'awake_seconds', cls: 'stage-awake', label: 'Awake' },
+];
+
+function hasStages(n) {
+  return STAGES.some(s => n[s.key] !== null && n[s.key] !== undefined);
+}
+
+function sleepHtml(data) {
+  const nights = data.nights;
+  const avgSleep = average(nights.map(n => n.sleep_seconds));
+  const avgScore = average(nights.map(n => n.sleep_score));
+  const avgHrv = average(nights.map(n => n.hrv_ms));
+  const avgRhr = average(nights.map(n => n.resting_hr));
+  const plural = nights.length === 1 ? 'night' : 'nights';
+
+  const stats = `
+    <div class="stat-grid">
+      ${statHtml('Avg sleep', fmtDuration(avgSleep), `${nights.length} ${plural} recorded`)}
+      ${statHtml('Sleep score', avgScore !== null ? Math.round(avgScore) : '—', 'average')}
+      ${statHtml('Overnight HRV', avgHrv !== null ? `${Math.round(avgHrv)} ms` : '—', 'average')}
+      ${statHtml('Resting HR', avgRhr !== null ? `${Math.round(avgRhr)} bpm` : '—', 'average')}
+    </div>`;
+
+  const rows = [...nights].reverse().map(n => {
+    const total = STAGES.reduce((s, st) => s + (n[st.key] || 0), 0);
+    const bar = hasStages(n) && total
+      ? `<div class="stage-bar">${STAGES.map(st => n[st.key]
+          ? `<div class="${st.cls}" style="width: ${(n[st.key] / total) * 100}%"></div>` : '').join('')}</div>`
+      : '';
+    const times = n.bedtime_local && n.wake_local ? `${n.bedtime_local.slice(11)} – ${n.wake_local.slice(11)}` : '';
+    const extras = [times, n.hrv_ms !== null && n.hrv_ms !== undefined ? `HRV ${Math.round(n.hrv_ms)} ms` : '']
+      .filter(Boolean).join(' · ');
+    return `
+      <div class="list-row">
+        <div>
+          <div class="list-row-main">${formatDateLabel(n.night_date)}</div>
+          ${extras ? `<div class="list-row-sub">${extras}</div>` : ''}
+          ${bar}
+        </div>
+        <div class="list-row-value">${fmtDuration(n.sleep_seconds)}
+          ${n.sleep_score !== null && n.sleep_score !== undefined ? `<div class="list-row-sub">score ${Math.round(n.sleep_score)}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="summary-section">${stats}</div>
+    <div class="summary-section">
+      <div class="summary-section-header"><span>Sleep per night</span></div>
+      ${sleepChartHtml(data)}
+    </div>
+    <div class="summary-section">
+      <div class="summary-section-header"><span>Nights</span></div>
+      <div class="list-card">${rows}</div>
+    </div>`;
+}
+
+function sleepChartHtml(data) {
+  const dates = dateRange(data.start, data.end);
+  const byDate = Object.fromEntries(data.nights.map(n => [n.night_date, n]));
+  const W = 320, H = 120, padTop = 6, padBottom = 2;
+  const slot = W / dates.length;
+  const barW = Math.max(4, slot * 0.62);
+  const maxS = Math.max(10 * 3600, ...data.nights.map(n => n.sleep_seconds || 0)) * 1.05;
+  const h = s => (s / maxS) * (H - padTop - padBottom);
+  const base = H - padBottom;
+
+  const bars = dates.map((d, i) => {
+    const n = byDate[d];
+    if (!n) return '';
+    const x = (i * slot + (slot - barW) / 2).toFixed(1);
+    if (!hasStages(n)) {
+      return `<rect x="${x}" y="${(base - h(n.sleep_seconds)).toFixed(1)}" width="${barW.toFixed(1)}" height="${h(n.sleep_seconds).toFixed(1)}" fill="var(--sleep-light)" rx="1.5" />`;
+    }
+    let y = base;
+    return STAGES.map(st => {
+      const secs = n[st.key] || 0;
+      if (!secs) return '';
+      y -= h(secs);
+      return `<rect x="${x}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h(secs).toFixed(1)}" fill="var(--${st.cls.replace('stage', 'sleep')})" />`;
+    }).join('');
+  }).join('');
+
+  const eightY = (base - h(8 * 3600)).toFixed(1);
+  return `
+    <div class="chart-card">
+      <svg class="chart-svg" viewBox="0 0 ${W} ${H}">
+        <line x1="0" x2="${W}" y1="${eightY}" y2="${eightY}" stroke="var(--text-faint)" stroke-opacity="0.6" stroke-width="1" stroke-dasharray="3 3" />
+        <text x="${W - 2}" y="${(eightY - 3)}" text-anchor="end" font-size="9" fill="var(--text-faint)">8h</text>
+        ${bars}
+      </svg>
+      <div class="chart-x-labels">
+        <span>${formatShortDate(data.start)}</span>
+        <span>${formatShortDate(data.end)}</span>
+      </div>
+      <div class="chart-legend">
+        ${STAGES.map(st => `<span><i class="lg-dot ${st.cls}"></i>${st.label}</span>`).join('')}
+        <span>Gaps: not recorded</span>
+      </div>
+    </div>`;
+}
+
+function fitnessHtml(data) {
+  const worn = data.days.filter(d => (d.steps || 0) > 0);
+  const avgSteps = average(worn.map(d => d.steps));
+  const avgActive = average(worn.map(d => d.active_kcal));
+  const totalLoad = data.activities.reduce((s, a) => s + (a.training_load || 0), 0);
+  const t = profileData && profileData.targets;
+
+  const stats = `
+    <div class="stat-grid">
+      ${statHtml('Steps', avgSteps !== null ? fmt(avgSteps) : '—', 'daily average')}
+      ${statHtml('Active calories', avgActive !== null ? fmt(avgActive) : '—', 'daily average')}
+      ${statHtml('Workouts', data.activities.length, 'last 14 days')}
+      ${statHtml('Training load', totalLoad ? fmt(totalLoad) : '—', 'last 14 days')}
+    </div>`;
+
+  const targetNote = t && t.basis === 'garmin'
+    ? `<p class="target-note">Your calorie target (~${fmt(t.calories)}) now uses your 7-day average of
+       ~${fmt(t.active_kcal_avg)} active calories, so it rises on active weeks and falls on quiet ones.</p>`
+    : (t ? `<p class="target-note">Your calorie target switches to your measured activity once your watch
+       has recorded at least 3 of the last 7 days.</p>` : '');
+
+  const rows = [...data.activities].reverse().map(a => {
+    const name = a.name || (a.activity_type || 'Workout').replace(/_/g, ' ');
+    const sub = [
+      formatDateLabel(a.local_date),
+      a.duration_s ? fmtDuration(a.duration_s) : '',
+      a.distance_m ? `${(a.distance_m / 1000).toFixed(1)} km` : '',
+      a.avg_hr ? `avg ${Math.round(a.avg_hr)} bpm` : '',
+    ].filter(Boolean).join(' · ');
+    return `
+      <div class="list-row">
+        <div>
+          <div class="list-row-main">${escapeHtml(name)}</div>
+          <div class="list-row-sub">${sub}</div>
+        </div>
+        <div class="list-row-value">${a.calories ? `${fmt(a.calories)} cal` : ''}
+          ${a.training_load ? `<div class="list-row-sub">load ${Math.round(a.training_load)}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="summary-section">${stats}</div>
+    ${targetNote}
+    <div class="summary-section">
+      <div class="summary-section-header"><span>Active calories per day</span></div>
+      ${activeChartHtml(data)}
+    </div>
+    <div class="summary-section">
+      <div class="summary-section-header"><span>Workouts</span></div>
+      ${rows ? `<div class="list-card">${rows}</div>` : '<div class="summary-empty">No workouts recorded.</div>'}
+    </div>`;
+}
+
+function activeChartHtml(data) {
+  const dates = dateRange(data.start, data.end);
+  const byDate = Object.fromEntries(data.days.map(d => [d.local_date, d]));
+  const W = 320, H = 100, padTop = 6, padBottom = 2;
+  const slot = W / dates.length;
+  const barW = Math.max(4, slot * 0.62);
+  const maxK = Math.max(300, ...data.days.map(d => d.active_kcal || 0)) * 1.05;
+  const h = k => (k / maxK) * (H - padTop - padBottom);
+  const bars = dates.map((d, i) => {
+    const k = byDate[d] && byDate[d].active_kcal;
+    if (!k) return '';
+    const x = (i * slot + (slot - barW) / 2).toFixed(1);
+    return `<rect x="${x}" y="${(H - padBottom - h(k)).toFixed(1)}" width="${barW.toFixed(1)}" height="${h(k).toFixed(1)}" fill="var(--accent)" rx="1.5" />`;
+  }).join('');
+  return `
+    <div class="chart-card">
+      <svg class="chart-svg" viewBox="0 0 ${W} ${H}">${bars}</svg>
+      <div class="chart-x-labels">
+        <span>${formatShortDate(data.start)}</span>
+        <span>${formatShortDate(data.end)}</span>
+      </div>
+    </div>`;
+}
+
+// ============================================================================
 // Start-up
 // ============================================================================
+
+async function refreshProfile() {
+  const r = await api(`/profile?today=${todayISO()}`);
+  if (!r.ok) return false;
+  profileData = await r.json();
+  renderDayTotals();
+  return true;
+}
 
 async function init() {
   loadDay();
   try {
-    const r = await api('/profile');
-    if (!r.ok) return;
-    profileData = await r.json();
-    if (profileData.profile) {
-      renderDayTotals();
-    } else {
-      openSetup('day');
-    }
+    if (!(await refreshProfile())) return;
+    if (!profileData.profile) openSetup('day');
+    // Pull fresh Garmin data in the background; skipped if synced in the last hour
+    syncGarmin();
   } catch (e) { /* auth banner already shown, or offline */ }
 }
 
