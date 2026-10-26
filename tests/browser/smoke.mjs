@@ -87,6 +87,33 @@ const SCENARIOS = {
     return 'described, corrected, saved and edited a meal';
   },
 
+  async favourites() {
+    await ready();
+    await waitFor(() => document.querySelector('[data-fav-id]'), 'favourite chip in the empty breakfast slot');
+    document.querySelector('[data-fav-id]').click();
+    await waitFor(() => dayMeals.some(m => m.meal_type === 'breakfast' && m.source === 'favourite'), 'logged favourite');
+    check(!document.querySelector('[data-fav-id]'), 'chip gone once breakfast is logged');
+
+    const lunch = dayMeals.find(m => m.meal_type === 'lunch');
+    document.querySelector(`[data-entry-id="${lunch.id}"]`).click();
+    await waitFor(() => visible(views.entry), 'entry detail');
+    check(entryFav.textContent === 'Save as favourite', 'an unstarred meal offers to save it');
+    entryFav.click();
+    await waitFor(() => entryFav.textContent === 'Remove from favourites', 'meal starred');
+    check(favourites.length === 2, 'two favourites now');
+    return 'logged a favourite in one tap and starred another meal';
+  },
+
+  async notice_banner() {
+    await ready();
+    await waitFor(() => document.querySelector('#notices .notice'), 'maintenance banner');
+    const notice = document.querySelector('#notices .notice');
+    check(notice.textContent.includes('Key expires: due in'), 'banner says what is due');
+    notice.querySelector('summary').click();
+    check(notice.open && notice.textContent.includes('Renew it.'), 'tapping shows what to do');
+    return 'maintenance banner shown with its action';
+  },
+
   async summary() {
     await ready();
     document.querySelector('[data-tab=summary]').click();

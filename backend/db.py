@@ -16,6 +16,7 @@ personal log.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from contextlib import contextmanager
@@ -140,7 +141,8 @@ CREATE TABLE IF NOT EXISTS meals (
     created_at TEXT NOT NULL,
     note TEXT,
     source TEXT,
-    updated_at TEXT
+    updated_at TEXT,
+    favourite_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS meal_items (
@@ -166,6 +168,18 @@ CREATE TABLE IF NOT EXISTS profile (
     activity TEXT NOT NULL,
     goal TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+-- A starred meal that can be logged again in one tap. items_json holds the
+-- meal's items in meal_items' shape (macros may be null on old meals).
+CREATE TABLE IF NOT EXISTS favourite (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meal_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    items_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    use_count INTEGER NOT NULL DEFAULT 0,
+    last_used_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS summary_cache (
@@ -253,6 +267,7 @@ _MIGRATION_COLUMNS = (
     ("meals", "note", "TEXT"),  # user's own description / corrections
     ("meals", "source", "TEXT"),  # 'photo' or 'text'
     ("meals", "updated_at", "TEXT"),  # set when an entry is corrected
+    ("meals", "favourite_id", "INTEGER"),  # the favourite it was logged from, or starred as
 )
 
 
@@ -321,21 +336,30 @@ def update_meal(meal_id: int, analysis: MealAnalysis, note: str | None) -> bool:
 
 
 def _insert_items(conn, meal_id: int, analysis: MealAnalysis) -> None:
-    for item in analysis.items:
+    _insert_item_rows(conn, meal_id, [
+        {
+            "name": item.name,
+            "grams": float(item.estimated_grams),
+            "calories": int(item.calories_estimate),
+            "confidence": item.confidence,
+            "protein_g": float(item.protein_g),
+            "carbs_g": float(item.carbs_g),
+            "fat_g": float(item.fat_g),
+        }
+        for item in analysis.items
+    ])
+
+
+_ITEM_COLUMNS = ("name", "grams", "calories", "confidence", "protein_g", "carbs_g", "fat_g")
+
+
+def _insert_item_rows(conn, meal_id: int, rows: list[dict]) -> None:
+    """Insert items already in meal_items' shape (as listed by list_meals_between)."""
+    for row in rows:
         conn.execute(
-            "INSERT INTO meal_items "
-            "(meal_id, name, grams, calories, confidence, protein_g, carbs_g, fat_g) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                meal_id,
-                item.name,
-                float(item.estimated_grams),
-                int(item.calories_estimate),
-                item.confidence,
-                float(item.protein_g),
-                float(item.carbs_g),
-                float(item.fat_g),
-            ),
+            f"INSERT INTO meal_items (meal_id, {', '.join(_ITEM_COLUMNS)}) "
+            f"VALUES (?, {', '.join('?' for _ in _ITEM_COLUMNS)})",
+            (meal_id, *(row.get(c) for c in _ITEM_COLUMNS)),
         )
 
 
@@ -351,7 +375,7 @@ def list_meals_between(start: str, end: str) -> list[dict]:
     """
     with _connect() as conn:
         meal_rows = conn.execute(
-            "SELECT id, date, meal_type, description, created_at, note, source, updated_at "
+            "SELECT id, date, meal_type, description, created_at, note, source, updated_at, favourite_id "
             "FROM meals WHERE date BETWEEN ? AND ? ORDER BY date, created_at",
             (start, end),
         ).fetchall()
@@ -386,6 +410,7 @@ def list_meals_between(start: str, end: str) -> list[dict]:
             "note": row[5],
             "source": row[6] or "photo",
             "updated_at": row[7],
+            "favourite_id": row[8],
             "items": items_by_meal.get(row[0], []),
         }
         for row in meal_rows
@@ -399,6 +424,85 @@ def delete_meal(meal_id: int) -> bool:
         conn.execute("DELETE FROM meal_items WHERE meal_id = ?", (meal_id,))
         cursor = conn.execute("DELETE FROM meals WHERE id = ?", (meal_id,))
         return cursor.rowcount > 0
+
+
+# ============================================================================
+# Favourites: star a saved meal, then log a copy of it in one tap
+# ============================================================================
+
+
+def _get_meal(meal_id: int) -> dict | None:
+    with _connect() as conn:
+        rows = conn.execute("SELECT date FROM meals WHERE id = ?", (meal_id,)).fetchall()
+    if not rows:
+        return None
+    return next(m for m in list_meals_between(rows[0][0], rows[0][0]) if m["id"] == meal_id)
+
+
+def list_favourites() -> list[dict]:
+    """Most-used first. Each carries its items and total calories for display."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, meal_type, name, items_json, use_count, last_used_at FROM favourite "
+            "ORDER BY use_count DESC, created_at DESC"
+        ).fetchall()
+    favourites = []
+    for r in rows:
+        items = json.loads(r[3])
+        favourites.append({
+            "id": r[0], "meal_type": r[1], "name": r[2], "items": items,
+            "calories": sum(i.get("calories") or 0 for i in items),
+            "use_count": r[4], "last_used_at": r[5],
+        })
+    return favourites
+
+
+def create_favourite_from_meal(meal_id: int, name: str | None = None) -> int | None:
+    """Star a saved meal. Returns the new favourite's id, or None if no such meal."""
+    meal = _get_meal(meal_id)
+    if meal is None:
+        return None
+    created_at = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            "INSERT INTO favourite (meal_type, name, items_json, created_at) VALUES (?, ?, ?, ?)",
+            (meal["meal_type"], name or meal["description"], json.dumps(meal["items"]), created_at),
+        )
+        favourite_id = cursor.lastrowid
+        conn.execute("UPDATE meals SET favourite_id = ? WHERE id = ?", (favourite_id, meal_id))
+    return favourite_id
+
+
+def delete_favourite(favourite_id: int) -> bool:
+    """Un-star. Meals logged from it stay; they just lose the link."""
+    with _connect() as conn:
+        conn.execute("UPDATE meals SET favourite_id = NULL WHERE favourite_id = ?", (favourite_id,))
+        cursor = conn.execute("DELETE FROM favourite WHERE id = ?", (favourite_id,))
+        return cursor.rowcount > 0
+
+
+def log_favourite(favourite_id: int, date: str) -> int | None:
+    """Save a copy of the favourite as a new meal on `date`. Returns the meal id."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT meal_type, name, items_json FROM favourite WHERE id = ?", (favourite_id,)
+        ).fetchall()
+        if not rows:
+            return None
+        meal_type, name, items_json = rows[0]
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = conn.execute(
+            "INSERT INTO meals (date, meal_type, description, created_at, source, favourite_id) "
+            "VALUES (?, ?, ?, ?, 'favourite', ?)",
+            (date, meal_type, name, now, favourite_id),
+        )
+        meal_id = cursor.lastrowid
+        _insert_item_rows(conn, meal_id, json.loads(items_json))
+        conn.execute(
+            "UPDATE favourite SET use_count = use_count + 1, last_used_at = ? WHERE id = ?",
+            (now, favourite_id),
+        )
+        return meal_id
 
 
 # ============================================================================

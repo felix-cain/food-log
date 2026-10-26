@@ -1,0 +1,39 @@
+# Weekly: re-run the tests against freshly installed dependencies (catches a
+# new library release breaking the app) and check maintenance.json for
+# anything coming due. A failed run makes GitHub email you.
+#
+# GitHub pauses scheduled workflows after 60 days without repo activity; the
+# Actions tab shows a button to re-enable it.
+
+name: Weekly check
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC
+  workflow_dispatch: # "Run workflow" button in the Actions tab
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m pytest
+        env:
+          CI: "true"
+
+  maintenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/check_maintenance.py

@@ -88,6 +88,25 @@ def test_describe_correct_save_and_edit(live_server):
     run_scenario(live_server, "describe_correct_save_edit")
 
 
+def test_favourites(live_server):
+    _seed_profile()
+    yesterday = date.fromordinal(date.today().toordinal() - 1)
+    breakfast_id = db.save_meal(yesterday.isoformat(), "breakfast", meal("Porridge with banana"))
+    db.create_favourite_from_meal(breakfast_id)
+    _seed_meal(date.today(), "lunch")
+    run_scenario(live_server, "favourites")
+
+
+def test_notice_banner(live_server, monkeypatch):
+    from backend import maintenance
+
+    _seed_profile()
+    soon = date.fromordinal(date.today().toordinal() + 5).isoformat()
+    item = {"id": "k", "what": "Key expires", "due": soon, "warn_days": 30, "action": "Renew it."}
+    monkeypatch.setattr(maintenance, "load", lambda: [item])
+    run_scenario(live_server, "notice_banner")
+
+
 def test_summary(live_server):
     _seed_profile()
     _seed_meal(date.fromordinal(date.today().toordinal() - 1))

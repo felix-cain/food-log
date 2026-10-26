@@ -1,0 +1,26 @@
+{
+  "_about": "Things that expire or need a periodic review. A weekly GitHub Actions run fails (and GitHub emails you) when one is due within warn_days, and the app shows a banner. After dealing with an item, move its due date on.",
+  "items": [
+    {
+      "id": "garmin-key",
+      "what": "Garmin Personal API key expires",
+      "due": "2027-10-26",
+      "warn_days": 30,
+      "action": "Create a new key at connect.garmin.com/app/settings/personalApiToken, replace GARMIN_PERSONAL_API_KEY in Render's Environment settings, then set this date to the new key's expiry."
+    },
+    {
+      "id": "claude-model",
+      "what": "Review the Claude model (claude-opus-5-5)",
+      "due": "2027-04-26",
+      "warn_days": 14,
+      "action": "Check Anthropic's models page for a deprecation notice or a newer model. Update the model in backend/vision.py and backend/summary.py if needed, run the tests, then move this date on six months."
+    },
+    {
+      "id": "anthropic-sdk",
+      "what": "Review the anthropic SDK pin (below 1.0)",
+      "due": "2027-04-26",
+      "warn_days": 14,
+      "action": "requirements.txt pins anthropic below 1.0. Check whether 0.x still receives updates; if not, plan the upgrade (it changes some call signatures). Move this date on six months."
+    }
+  ]
+}
