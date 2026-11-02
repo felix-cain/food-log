@@ -910,3 +910,21 @@ input[type="file"] { display: none; }
 .stage-awake { background: var(--sleep-awake); }
 .lg-dot.stage-deep, .lg-dot.stage-light, .lg-dot.stage-rem, .lg-dot.stage-awake { border-radius: 2px; }
 .target-note { font-size: 13px; color: var(--text-muted); line-height: 1.5; margin: 0 4px 16px; }
+
+/* Gym class logging */
+#gym-photos { display: none; }
+.scale-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 6px 4px 0;
+}
+#gym-rating-hint { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.gym-block { background: var(--surface); border-radius: 12px; padding: 12px 16px; margin-bottom: 8px; }
+.gym-block-head { font-size: 15px; font-weight: 500; }
+.gym-block-kind { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-faint); }
+.gym-block ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+.gym-block-scheme { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+.list-row.tappable { cursor: pointer; }
+.gym-add { margin-bottom: 12px; }

@@ -150,6 +150,56 @@ const SCENARIOS = {
     return 'sleep and fitness tabs rendered from synced data';
   },
 
+  async gym_class() {
+    await ready();
+    document.querySelector('[data-tab=fitness]').click();
+    await waitFor(() => document.querySelector('[data-gym-log]'), 'gym section, even with no Garmin');
+    check(document.getElementById('fitness-content').textContent.includes('No classes logged'), 'empty state');
+    document.querySelector('[data-gym-log]').click();
+    check(visible(views.gym) && !visible(views.fitness), 'log screen shown');
+    check(document.getElementById('gym-date').value === todayISO(), 'date defaults to today');
+
+    // Add a screenshot and let Claude (faked) read it
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'programme.png', { type: 'image/png' }));
+    gymPhotos.files = transfer.files;
+    gymPhotos.dispatchEvent(new Event('change'));
+    check(!gymRead.hidden, 'read button offered once a screenshot is added');
+    gymRead.click();
+    await waitFor(() => document.querySelector('#gym-programme .gym-block'), 'programme read');
+    check(document.getElementById('gym-class').value === 'Delta Strength', 'class name filled from the page');
+    check(document.getElementById('gym-programme').textContent.includes('8 chin ups'), 'movements shown');
+
+    // Rate it, then clear and re-rate by tapping the same number twice
+    const stars = n => document.querySelector('input[name=effort][value="' + n + '"]');
+    stars(4).click();
+    check(document.getElementById('gym-rating-hint').textContent.includes('Hard'), 'rating labelled');
+    stars(4).click();
+    check(gymRating === null, 'tapping the chosen rating clears it');
+    stars(4).click();
+    document.getElementById('gym-notes').value = 'front squat 60kg, Int ladder';
+    document.getElementById('gym-save').click();
+    await waitFor(() => visible(views.fitness) && document.querySelector('[data-gym-id]'), 'saved class in the list');
+    const row = document.querySelector('[data-gym-id]');
+    check(row.textContent.includes('Delta Strength') && row.textContent.includes('4/5') && row.textContent.includes('front squat'),
+      'row shows name, rating and notes');
+
+    // Open it again, change the notes, then delete it
+    row.click();
+    await waitFor(() => visible(views.gym) && document.getElementById('gym-title').textContent === 'Edit class', 'edit screen');
+    check(document.getElementById('gym-notes').value.includes('Int ladder') && gymRating === 4, 'fields restored');
+    check(document.querySelector('#gym-programme .gym-block'), 'saved programme shown');
+    document.getElementById('gym-notes').value = 'scaled the ladder';
+    document.getElementById('gym-save').click();
+    await waitFor(() => visible(views.fitness) && document.querySelector('[data-gym-id]')?.textContent.includes('scaled'), 'edited notes');
+    window.confirm = () => true;
+    document.querySelector('[data-gym-id]').click();
+    await waitFor(() => visible(views.gym), 'edit screen again');
+    document.getElementById('gym-delete').click();
+    await waitFor(() => visible(views.fitness) && !document.querySelector('[data-gym-id]'), 'class deleted');
+    return 'read a programme, rated and saved a class, edited it, deleted it';
+  },
+
   async garmin_not_connected() {
     await ready();
     document.querySelector('[data-tab=sleep]').click();

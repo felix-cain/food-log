@@ -92,7 +92,7 @@ def test_watch_data_reaches_the_prompt_and_the_target(client, claude, with_profi
     assert health.sync_garmin(date.fromisoformat(TODAY))["status"] == "ok"
     s = _summary(client)
     prompt = claude.calls[-1]["messages"][0]["content"]
-    assert "Sleep and activity from their watch:" in prompt
+    assert "Sleep, activity and gym training:" in prompt
     assert "2026-10-25: night before: slept 7h00, score 78, HRV 55ms" in prompt
     assert "measured activity" in prompt
     assert s["targets"]["basis"] == "garmin" and s["targets"]["calories"] == 2500

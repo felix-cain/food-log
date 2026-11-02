@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from types import SimpleNamespace
 
+from backend.gym import GymBlock, GymProgramme
 from backend.summary import ClaudeAnalysis
 from backend.vision import FoodItem, MealAnalysis
 
@@ -19,6 +20,17 @@ def item(name: str = "sourdough", grams: float = 80, calories: int = 200, **over
 def meal(description: str = "Peanut butter toast", grams: float = 80, calories: int = 200,
          items: list[FoodItem] | None = None) -> MealAnalysis:
     return MealAnalysis(description=description, items=items or [item(grams=grams, calories=calories)])
+
+
+def programme(class_name: str = "Delta Strength") -> GymProgramme:
+    return GymProgramme(
+        class_name=class_name,
+        summary="Upper-body pull and lower-body strength",
+        blocks=[
+            GymBlock(kind="strength", title=None, format="4 sets", movements=["8 chin ups", "8 5s tempo goblet squat"], scheme=None),
+            GymBlock(kind="accessory", title=None, format="AMRAP 6 min", movements=["7 bicep curls", "7 lateral raises"], scheme="with a partner"),
+        ],
+    )
 
 
 class FakeAnthropic:
@@ -40,7 +52,9 @@ class FakeAnthropic:
         self.calls.append(kwargs)
         if self.fail:
             raise self.fail
-        if kwargs["output_format"] is MealAnalysis:
+        if kwargs["output_format"] is GymProgramme:
+            out = programme()
+        elif kwargs["output_format"] is MealAnalysis:
             corrected = "full revised list" in self.prompt()
             out = meal("Toast (version 2)" if corrected else "Toast (version 1)", grams=160 if corrected else 80)
         else:

@@ -51,16 +51,19 @@ function renderHealthView(kind, data) {
   renderSyncLine(kind, data);
   const content = document.getElementById(`${kind}-content`);
   const hasData = kind === 'sleep' ? data.nights.length > 0 : (data.days.length > 0 || data.activities.length > 0);
+  // Gym classes are logged by hand, so they show whether or not Garmin is connected
+  const gym = kind === 'fitness' ? gymSectionHtml(data) : '';
   if (!data.configured) {
-    content.innerHTML = `<div class="summary-empty">Garmin isn't connected yet. Add your Personal API key to Render
+    content.innerHTML = gym + `<div class="summary-empty">Garmin isn't connected yet. Add your Personal API key to Render
       as <strong>GARMIN_PERSONAL_API_KEY</strong>, then reopen the app.</div>`;
   } else if (!hasData) {
-    content.innerHTML = `<div class="summary-empty">${kind === 'sleep'
+    content.innerHTML = gym + `<div class="summary-empty">${kind === 'sleep'
       ? 'No sleep recorded in the last 14 nights. Wear your watch overnight and nights appear here once it syncs to Garmin Connect.'
       : 'No activity recorded in the last 14 days. Wear your watch and it appears here once it syncs to Garmin Connect.'}</div>`;
   } else {
-    content.innerHTML = kind === 'sleep' ? sleepHtml(data) : fitnessHtml(data);
+    content.innerHTML = kind === 'sleep' ? sleepHtml(data) : gym + fitnessHtml(data);
   }
+  if (kind === 'fitness') wireGymSection(content, data);
 }
 
 function renderSyncLine(kind, data) {

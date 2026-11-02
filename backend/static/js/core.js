@@ -63,6 +63,7 @@ const views = {
   summary: document.getElementById('summary-view'),
   sleep: document.getElementById('sleep-view'),
   fitness: document.getElementById('fitness-view'),
+  gym: document.getElementById('gym-view'),
 };
 const tabBar = document.getElementById('tab-bar');
 const summaryContent = document.getElementById('summary-content');

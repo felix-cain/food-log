@@ -178,10 +178,61 @@
 <section id="fitness-view" hidden>
   <header>
     <h1 class="summary-title">Fitness</h1>
-    <div class="summary-subtitle">Last 14 days from your Garmin.</div>
+    <div class="summary-subtitle">Last 14 days: gym classes you log and your Garmin.</div>
   </header>
   <div class="sync-line" id="fitness-sync"></div>
   <div id="fitness-content"></div>
+</section>
+
+<section id="gym-view" hidden>
+  <div class="view-nav">
+    <button id="gym-back" aria-label="Back">‹ Back</button>
+    <span class="view-title" id="gym-title">Log a class</span>
+    <span class="view-nav-spacer"></span>
+  </div>
+
+  <div id="gym-capture" class="field">
+    <span class="field-label">Programming screenshots (up to 4)</span>
+    <button class="secondary-btn" id="gym-pick">Add screenshots</button>
+    <input type="file" id="gym-photos" accept="image/*" multiple>
+    <div id="gym-photo-count" class="note-tip"></div>
+    <button class="primary-btn" id="gym-read" hidden>Read the programme</button>
+  </div>
+  <div id="gym-status" class="status"></div>
+  <div id="gym-programme"></div>
+
+  <form id="gym-form" novalidate>
+    <label class="field">
+      <span class="field-label">Class</span>
+      <input class="text-input" id="gym-class" maxlength="200" placeholder="e.g. Delta Strength" required>
+    </label>
+    <label class="field">
+      <span class="field-label">Date</span>
+      <input class="text-input" id="gym-date" type="date" required>
+    </label>
+    <fieldset class="field">
+      <legend class="field-label">How did I find it? <span id="gym-rating-hint"></span></legend>
+      <div class="segmented" id="gym-rating">
+        <label><input type="radio" name="effort" value="1"><span>1</span></label>
+        <label><input type="radio" name="effort" value="2"><span>2</span></label>
+        <label><input type="radio" name="effort" value="3"><span>3</span></label>
+        <label><input type="radio" name="effort" value="4"><span>4</span></label>
+        <label><input type="radio" name="effort" value="5"><span>5</span></label>
+      </div>
+      <div class="scale-ends"><span>Easy</span><span>Wrecked</span></div>
+    </fieldset>
+    <div class="field">
+      <label class="field-label" for="gym-notes">What did you do?</label>
+      <div class="note-box">
+        <textarea class="text-input" id="gym-notes" rows="4"
+          placeholder="e.g. Int ladder, 20kg snatch, double reps on the sit ups. Front squat 60kg."></textarea>
+      </div>
+      <div class="note-tip">Weights and which option you took. Tap the mic on your keyboard to dictate.</div>
+    </div>
+    <div id="gym-error"></div>
+    <button type="submit" class="primary-btn" id="gym-save">Save class</button>
+  </form>
+  <button class="danger-btn" id="gym-delete" hidden>Delete class</button>
 </section>
 
 <nav class="tab-bar" id="tab-bar">
@@ -199,6 +250,7 @@
 <script src="/static/js/setup.js?v={{VERSION}}"></script>
 <script src="/static/js/summary.js?v={{VERSION}}"></script>
 <script src="/static/js/health.js?v={{VERSION}}"></script>
+<script src="/static/js/gym.js?v={{VERSION}}"></script>
 <script src="/static/js/main.js?v={{VERSION}}"></script>
 </body>
 </html>

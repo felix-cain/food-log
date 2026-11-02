@@ -18,6 +18,10 @@ Endpoints:
     POST /sync             - Pull recent Garmin data (skipped if synced in the last hour)
     GET  /sleep?days=...   - Nights of sleep, newest data from the last sync
     GET  /fitness?days=... - Daily activity totals + workouts
+    POST /gym/analyze      - Screenshots of a class's programming -> structured session (no save)
+    POST /gym/sessions     - Save a gym class with the person's notes and 1-5 rating
+    PUT  /gym/sessions/{id} - Edit a saved class's date, name, notes and rating
+    DELETE /gym/sessions/{id} - Remove a saved class (gym classes are listed by GET /fitness)
     GET  /notices          - Banners: maintenance coming due, Garmin key rejected
 """
 
@@ -27,29 +31,33 @@ import os
 import time
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from .auth import require_token
 from . import health, maintenance
 from .db import (
     create_favourite_from_meal,
     delete_favourite,
+    delete_gym_session,
     delete_meal,
     list_favourites,
     log_favourite,
     get_profile,
     init_db,
     list_meals_for_date,
+    save_gym_session,
     save_meal,
     save_profile,
+    update_gym_session,
     update_meal,
 )
+from .gym import GymProgramme, analyze_programme
 from .summary import SummaryResponse, build_summary
 from .targets import Profile, Targets, compute_targets
 from .vision import MealAnalysis, analyze_meal
@@ -254,6 +262,79 @@ def get_sleep(days: int = 14, today: date | None = None) -> dict:
 def get_fitness(days: int = 14, today: date | None = None) -> dict:
     start, end = _window(days, today)
     return {**health.sync_status(), "start": start, "end": end, **health.fitness_between(start, end)}
+
+
+# ============================================================================
+# Gym classes
+# ============================================================================
+
+MAX_GYM_PHOTOS = 4
+
+
+class GymSessionFields(BaseModel):
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")  # client supplies local date
+    class_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    notes: str | None = Field(default=None, max_length=4000)
+    effort_rating: int | None = Field(default=None, ge=1, le=5)
+
+
+class SaveGymSessionRequest(GymSessionFields):
+    # Optional: a class can be logged by name and notes alone
+    programme: GymProgramme | None = None
+
+
+@app.post(
+    "/gym/analyze",
+    response_model=GymProgramme,
+    dependencies=[Depends(require_token)],
+)
+async def gym_analyze(photos: list[UploadFile] = File(default=[])) -> GymProgramme:
+    if not photos:
+        raise HTTPException(400, "Send at least one screenshot")
+    if len(photos) > MAX_GYM_PHOTOS:
+        raise HTTPException(400, f"Send {MAX_GYM_PHOTOS} screenshots at most")
+    images = []
+    for photo in photos:
+        if not photo.content_type or not photo.content_type.startswith("image/"):
+            raise HTTPException(400, "Expected image uploads")
+        data = await photo.read()
+        if not data:
+            raise HTTPException(400, "Empty file")
+        images.append((data, photo.content_type))
+    try:
+        return await run_in_threadpool(analyze_programme, images)
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.post("/gym/sessions", dependencies=[Depends(require_token)])
+def create_gym_session(req: SaveGymSessionRequest) -> dict:
+    programme = req.programme
+    session_id = save_gym_session(
+        req.date,
+        req.class_name,
+        programme.summary if programme else None,
+        [b.model_dump() for b in programme.blocks] if programme else [],
+        (req.notes or "").strip() or None,
+        req.effort_rating,
+    )
+    return {"id": session_id, "status": "saved"}
+
+
+@app.put("/gym/sessions/{session_id}", dependencies=[Depends(require_token)])
+def correct_gym_session(session_id: int, req: GymSessionFields) -> dict:
+    if not update_gym_session(
+        session_id, req.date, req.class_name, (req.notes or "").strip() or None, req.effort_rating
+    ):
+        raise HTTPException(404, "Gym session not found")
+    return {"id": session_id, "status": "updated"}
+
+
+@app.delete("/gym/sessions/{session_id}", dependencies=[Depends(require_token)])
+def remove_gym_session(session_id: int) -> dict:
+    if not delete_gym_session(session_id):
+        raise HTTPException(404, "Gym session not found")
+    return {"status": "deleted"}
 
 
 @app.get("/notices", dependencies=[Depends(require_token)])

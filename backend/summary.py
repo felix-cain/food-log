@@ -96,7 +96,7 @@ class SummaryResponse(BaseModel):
 
 # Bump when the prompt changes meaningfully, so cached analyses written with
 # the old prompt aren't reused
-PROMPT_VERSION = "2-food-quality"
+PROMPT_VERSION = "3-gym"
 
 _ANALYSIS_PROMPT = """You are looking at someone's food log for the last {days} days. For each day there are the meals they logged, with each item's portion, calories and macros (protein/carbs/fat), plus where available its food group, how processed it is, fibre and the plant foods in it. Above the log there are food-quality measures already worked out from it; those numbers are exact, so use them rather than re-adding the log.
 
@@ -111,7 +111,8 @@ Guidance:
 - Some older meals don't have food-quality detail; the measures note how many meals they cover. Don't treat missing detail as zero.
 - Days marked "(partial)" are missing at least one of breakfast, lunch or dinner. Their totals are probably incomplete — don't read a low-calorie partial day as under-eating. Days marked "(nothing logged)" are unknown, not fasting.
 
-- If sleep and activity data from their watch is included, look for links with eating where the data supports them: e.g. short or poor sleep followed by higher-calorie or more snack-heavy days, intake on training days versus rest days, protein after hard sessions. "Night before" on a date is the sleep that ended that morning. Days without watch data are unknown, not zero.
+- If sleep, activity and gym data is included, look for links with eating where the data supports them: e.g. short or poor sleep followed by higher-calorie or more snack-heavy days, intake on training days versus rest days, protein after hard sessions. "Night before" on a date is the sleep that ended that morning. Days without watch data are unknown, not zero.
+- Gym classes show what the class programmed, not what they did: the weights, the level they chose and any scaling are only known from their own words, and the 1-5 rating is how hard it felt (1 easy, 5 wrecked). Where they didn't say what they did, treat the session's demand as uncertain rather than assuming they did the heaviest option. Look at how eating, protein and sleep line up with harder classes and with how hard they felt.
 
 Don't invent patterns the data doesn't support. Treat the user as someone who wants honest feedback, not encouragement.
 {context}
@@ -259,7 +260,7 @@ def build_summary(days: int = 7, today: date | None = None, refresh: bool = Fals
             context=_format_context(profile, targets),
             quality=format_quality(quality),
             data=_format_meal_data(daily_meals),
-            health=f"\n\nSleep and activity from their watch:\n{health_text}" if health_text else "",
+            health=f"\n\nSleep, activity and gym training:\n{health_text}" if health_text else "",
         )
         try:
             analysis = _run_analysis(prompt)

@@ -23,6 +23,7 @@ from .db import (
     get_sync_state,
     list_activities_between,
     list_daily_activity_between,
+    list_gym_sessions_between,
     list_sleep_between,
     save_sync_state,
     upsert_activities,
@@ -285,6 +286,7 @@ def fitness_between(start: str, end: str) -> dict:
     return {
         "days": list_daily_activity_between(start, end),
         "activities": list_activities_between(start, end),
+        "gym_sessions": list_gym_sessions_between(start, end),
     }
 
 
@@ -311,6 +313,25 @@ def _hm(seconds: float | None) -> str:
     return f"{minutes // 60}h{minutes % 60:02d}"
 
 
+def _gym_line(g: dict) -> str:
+    """One gym class: what was programmed, how it felt, and their own words."""
+    blocks = []
+    for b in g["blocks"]:
+        label = b.get("title") or b.get("kind") or "block"
+        detail = "; ".join(x for x in (b.get("format"), ", ".join(b.get("movements") or []), b.get("scheme")) if x)
+        blocks.append(f"{b.get('kind')} ({label}): {detail}" if detail else f"{b.get('kind')} ({label})")
+    line = f"gym class: {g['class_name']}"
+    if blocks:
+        line += f", programmed as [{' | '.join(blocks)}]"
+    if g.get("effort_rating"):
+        line += f", they rated it {g['effort_rating']}/5 (1 easy, 5 wrecked)"
+    if g.get("notes"):
+        line += f', their own words: "{g["notes"]}"'
+    else:
+        line += ", no notes on what they actually did"
+    return line
+
+
 def format_for_analysis(dates: list[str]) -> str:
     """Per-day sleep and activity lines for the summary prompt ('' if none)."""
     if not dates:
@@ -321,7 +342,10 @@ def format_for_analysis(dates: list[str]) -> str:
     acts: dict[str, list[dict]] = {}
     for a in list_activities_between(start, end):
         acts.setdefault(a["local_date"], []).append(a)
-    if not (sleep or daily or acts):
+    gym: dict[str, list[dict]] = {}
+    for g in list_gym_sessions_between(start, end):
+        gym.setdefault(g["local_date"], []).append(g)
+    if not (sleep or daily or acts or gym):
         return ""
 
     lines = []
@@ -353,5 +377,7 @@ def format_for_analysis(dates: list[str]) -> str:
             if w.get("training_load"):
                 bits.append(f"load {round(w['training_load'])}")
             parts.append("workout: " + " ".join(bits))
+        for g in gym.get(d, []):
+            parts.append(_gym_line(g))
         lines.append(f"{d}: " + ("; ".join(parts) if parts else "(no watch data)"))
     return "\n".join(lines)

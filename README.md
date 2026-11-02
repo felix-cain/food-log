@@ -33,6 +33,7 @@ FastAPI on Render (free tier) ──► Turso (hosted SQLite): meals, profile, f
 | `backend/targets.py` | Calorie and protein targets (Mifflin-St Jeor, adjusted by measured activity) |
 | `backend/nutrition.py` | Food-quality measures against UK guidelines (fibre, 5 a day, plants, protein sources...) |
 | `backend/garmin.py`, `health.py` | Garmin client, sync, parsing |
+| `backend/gym.py`, `static/js/gym.js` | Gym classes: Claude reads programming screenshots; you add notes and a 1-5 rating |
 | `backend/maintenance.py`, `maintenance.json` | Things that expire, and the in-app banner |
 | `backend/static/` | The web app: `index.html`, `css/app.css`, `js/*.js` (load order is in `index.html`) |
 | `tests/` | pytest suite, plus `tests/browser/smoke.mjs` for headless-Chrome scenarios |
@@ -101,6 +102,7 @@ Tests use `FOODLOG_DB_PATH` to point at a throwaway database. Render sets `RENDE
 
 - **Food quality:** each item also records its food group, processing level (whole, processed, ultra-processed), fibre, free sugars, saturated fat, salt, fruit and veg portions and the plants in it. `backend/nutrition.py` turns these into exact measures against UK guidelines, and Claude writes the insights from them. Items logged before this existed have no detail and aren't counted. `PROMPT_VERSION` in `summary.py` is part of the analysis cache key, so bump it when the prompt changes.
 - **Meals:** stored as parsed items, not photos. Your own typed or dictated words are kept as the meal's `note` and given to the Summary analysis as the most reliable part of the record.
+- **Gym classes:** the gym's app has no export, so you screenshot a class's Programming page on the Fitness tab and Claude reads it. That page is what was *programmed*, not what you did, so your own notes (weights, which option you took) and the 1-5 "how did I find it" rating carry the rest. They live in `gym_session`, apart from the Garmin `activity` table so a sync never overwrites them, and reach the Summary analysis next to the watch data. A class can also be saved by name and notes alone.
 - **Sleep:** `sleep_night.night_date` is the date you woke up, so night N lines up with food on day N.
 - **Garmin field names:** the sleep fields are confirmed against a real response. The daily-summary, HRV and activity fields follow Garmin Connect's long-standing names but haven't been checked against real data yet. Run `python garmin_probe.py` with the key set once the watch has a few days of data. Raw responses are stored in `raw_json`, so a mapping fix doesn't need a refetch.
 - **Backups:** none yet beyond what Turso provides. The live Turso database is the only copy of the food log.

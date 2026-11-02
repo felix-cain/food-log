@@ -256,6 +256,22 @@ CREATE TABLE IF NOT EXISTS activity (
 
 CREATE INDEX IF NOT EXISTS idx_activity_date ON activity(local_date);
 
+-- Gym classes logged by hand from the gym app's programming screenshots.
+-- Kept apart from `activity`, which Garmin syncs overwrite.
+CREATE TABLE IF NOT EXISTS gym_session (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    local_date TEXT NOT NULL,
+    class_name TEXT NOT NULL,
+    summary TEXT,
+    blocks_json TEXT,
+    notes TEXT,
+    effort_rating INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_gym_session_date ON gym_session(local_date);
+
 CREATE TABLE IF NOT EXISTS sync_state (
     source TEXT PRIMARY KEY,
     last_synced_date TEXT,
@@ -678,3 +694,66 @@ def save_sync_state(
             ),
         )
 
+
+
+# ============================================================================
+# Gym sessions (logged by hand)
+# ============================================================================
+
+_GYM_COLUMNS = ("id", "local_date", "class_name", "summary", "blocks_json", "notes", "effort_rating", "created_at", "updated_at")
+
+
+def _gym_row(row: tuple) -> dict:
+    d = dict(zip(_GYM_COLUMNS, row))
+    d["blocks"] = json.loads(d.pop("blocks_json") or "[]")
+    return d
+
+
+def save_gym_session(
+    local_date: str,
+    class_name: str,
+    summary: str | None,
+    blocks: list[dict],
+    notes: str | None,
+    effort_rating: int | None,
+) -> int:
+    with _connect() as conn:
+        cursor = conn.execute(
+            "INSERT INTO gym_session (local_date, class_name, summary, blocks_json, notes, effort_rating, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (local_date, class_name, summary, json.dumps(blocks), notes, effort_rating,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        return int(cursor.lastrowid)
+
+
+def update_gym_session(
+    session_id: int,
+    local_date: str,
+    class_name: str,
+    notes: str | None,
+    effort_rating: int | None,
+) -> bool:
+    """Edit what the person controls after saving; the programme itself stays as read."""
+    with _connect() as conn:
+        cursor = conn.execute(
+            "UPDATE gym_session SET local_date = ?, class_name = ?, notes = ?, effort_rating = ?, updated_at = ? "
+            "WHERE id = ?",
+            (local_date, class_name, notes, effort_rating, datetime.now(timezone.utc).isoformat(), session_id),
+        )
+        return cursor.rowcount > 0
+
+
+def delete_gym_session(session_id: int) -> bool:
+    with _connect() as conn:
+        return conn.execute("DELETE FROM gym_session WHERE id = ?", (session_id,)).rowcount > 0
+
+
+def list_gym_sessions_between(start: str, end: str) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT {', '.join(_GYM_COLUMNS)} FROM gym_session WHERE local_date BETWEEN ? AND ? "
+            "ORDER BY local_date, id",
+            (start, end),
+        ).fetchall()
+    return [_gym_row(r) for r in rows]

@@ -127,3 +127,8 @@ def test_sleep_and_fitness(live_server, garmin_fake):
 def test_garmin_not_connected(live_server):
     _seed_profile()
     run_scenario(live_server, "garmin_not_connected")
+
+
+def test_gym_class(live_server):
+    _seed_profile()
+    run_scenario(live_server, "gym_class")
